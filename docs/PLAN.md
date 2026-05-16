@@ -15,11 +15,28 @@ A two-sided web platform.
 
 - **Victim PWA**: one button to call (or text) describing situation. Captures location, needs, profile. Works under low signal (offline queue).
 - **Responder dashboard**: live map of incidents with severity heatmap, auto-clustered duplicate reports, AI-explained priority, and dynamic dispatch of responder units (police / fire / EMT / paramedic / nurse / doctor / volunteer) by required-resource match + severity + distance.
-- **AI backbone in Snowflake**: Cortex AI for severity scoring + summarization, Cortex Search for vector dedup, Streams+Tasks for auto-triage pipeline, Dynamic Tables for live aggregates, geospatial functions for clustering, Snowpark UDF for landmark-based location fallback.
+- **AI backbone in Snowflake**: Cortex AI for severity scoring + summarization, Cortex embeddings + vector similarity for semantic dedup, Streams+Tasks for auto-triage pipeline, Dynamic Tables for live aggregates, geospatial functions for clustering, Snowpark UDF for GPS-missing place-description fallback.
 
 ## Demo Scenario
 
-**Texas flash flood, Houston metro.** Pre-authored 50-incident JSON triggered by admin "Start Scenario" button. Real Cortex pipeline runs on synthetic data → genuine severity, real clusters, real routing.
+**Texas flash flood, Houston metro.** Pre-authored 50-incident scenario triggered by admin "Start Scenario" button. The API owns the 60-second theatrical insert timing; every inserted incident then runs through the real Snowflake pipeline → genuine severity, real clusters, real dispatch.
+
+## Demo Truth Boundary
+
+- **Synthetic input is allowed**: v1 victim "calls" are pre-authored scenario incidents, not real phone calls.
+- **Snowflake processing must be live**: scenario incidents still go through the real API/Snowflake ingest path, Cortex severity, dedup/clustering, roster rollup, and dispatch assignment during the demo.
+- **Scenario timing belongs to the API**: Snowflake owns scenario processing/state after ingest; the API schedules incident inserts so the demo beats are reliable.
+- **Routes are live with fallback**: Mapbox polylines are attempted live; if Mapbox fails, use cached routes or straight-line route previews so dispatch remains visible.
+- **Offline queue is smoke-tested only**: prove one offline submit can queue and flush, but do not build production-grade offline sync semantics in v1.
+- **Animations are optional polish**: pin entry, cluster merge, and route redraw animations are cut before any Snowflake or dispatch work.
+
+## Verification Standard
+
+- **Required**: `pnpm typecheck` across workspace.
+- **Required**: API tests for request validation, happy-path route handlers with mocked Snowflake, and error response shape.
+- **Required**: Snowflake smoke checklist: schema applies, 3 incidents enrich, clusters refresh, dispatch creates assignments/unmet needs.
+- **Required**: manual end-to-end demo script: start scenario → incidents appear → severity visible → dispatch visible → route fallback works.
+- **Not required for v1**: full frontend unit tests, full Playwright suite, production offline-sync tests.
 
 ---
 
@@ -29,17 +46,17 @@ A two-sided web platform.
 | --- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | D1  | Time + team                                                               | 18h × 4 people                                                                                         |
 | D2  | Realtime layer                                                            | Snowflake only (hard constraint), poll Snowflake from API, push to dashboards via SSE                  |
-| D3  | Snowflake features showcased                                              | All 6: Cortex AI, Cortex Search, Streams+Tasks, Dynamic Tables, Geo fns, Snowpark UDF                  |
+| D3  | Snowflake features showcased                                              | Cortex AI, Cortex embeddings/vector similarity, Streams+Tasks, Dynamic Tables, Geo fns, Snowpark UDF; true Cortex Search service is stretch |
 | D4  | Voice pipeline                                                            | **Deferred** — text-first for v1, ElevenLabs ConvAI added as drop-in replacement when time permits     |
 | D5  | Victim client                                                             | PWA (Vite + React + TS), service worker offline queue                                                  |
-| D6  | Map + routing                                                             | Mapbox + deck.gl + Mapbox Optimization API; Leaflet adapter as fallback                                |
+| D6  | Map + routing                                                             | Mapbox + deck.gl + Mapbox Optimization API; fallbacks are cached/straight-line routes, fixture mode, and screenshot/video backup |
 | D7  | API server                                                                | Hono on Node, TS, SSE push, Snowflake Node SDK                                                         |
-| D8  | Auth                                                                      | Anonymous victim w/ device ID + optional pre-reg profile; demo-hardcoded responder login               |
+| D8  | Auth                                                                      | Anonymous victim w/ device ID; responder UI may use hardcoded login; admin/roster mutations require `ADMIN_TOKEN` |
 | D9  | Doomsday kit                                                              | Self-inventory in pre-reg; need-flags ride on incident payload; no delivery routing                    |
-| D10 | Location confidence                                                       | Must-have minimal: Snowpark UDF wrapping Cortex + Mapbox Geocoding; pin with dashed confidence radius  |
+| D10 | Location confidence                                                       | GPS primary; if GPS fails, Snowpark UDF scores a seeded Houston place-description lookup; live Mapbox place search is stretch |
 | D11 | Severity scoring                                                          | Full inputs (transcript, needs, profile, location risk, time-decay); JSON output with 3-reason explain |
-| D12 | Cluster + dedup                                                           | Both, auto via Dynamic Table joining `ST_CLUSTER_KMEANS` + Cortex Search vector similarity             |
-| D13 | Routing                                                                   | Full dynamic: Snowflake greedy proc + Mapbox polyline + recompute on sev≥80 or unit-free               |
+| D12 | Cluster + dedup                                                           | Both, auto via Dynamic Table joining `ST_CLUSTER_KMEANS` + Cortex embeddings/vector similarity; true Cortex Search service only if hour-1 spike succeeds |
+| D13 | Routing                                                                   | V1 greedy multi-resource dispatch with visible unmet needs; schema leaves room for later optimizer; Mapbox polyline + recompute on sev≥80 or unit-free |
 | D14 | Demo data                                                                 | 50 hand-authored Texas flood incidents in `scenarios/texas-flood.json`                                 |
 | D15 | Responder UI                                                              | Map-dominant + collapsible side panels + bottom route drawer, dark mode                                |
 | D16 | Victim UI                                                                 | Minimal: Call/Text buttons + dynamic prompt of what to say; pre-reg one-time; status screen after      |
@@ -52,13 +69,13 @@ A two-sided web platform.
 ## Must-Have Feature List (ship by hour 16)
 
 1. **pnpm monorepo scaffold** + shared `packages/types`.
-2. **Snowflake schema**: `profiles`, `incidents`, `severities`, `clusters`, `responders`, `assignments`, `routes`.
-3. **Victim PWA**: pre-reg screen, home (Call/Text buttons + dynamic prompt), text incident submit, post-submit live status screen, inventory toggle, manual-location fallback.
+2. **Snowflake schema**: `profiles`, `incidents_raw`, `incidents_enriched`, `clusters`, `responders`, `assignments`, `routes`.
+3. **Victim PWA**: thin live submitter first: home (Call/Text buttons + dynamic prompt), text incident submit with GPS/place-description fallback, post-submit live status screen. Pre-reg, inventory, and offline depth are add-back scope after the main pipeline works.
 4. **Responder dashboard**: Mapbox map full-bleed, deck.gl heatmap + cluster pins, severity legend, right-sidebar queue, side-sheet with transcript + extracted needs + severity + 3 explainability reasons, left-sidebar filters, top stats bar, **resource roster panel**, bottom route drawer with per-unit assignment.
 5. **Cortex severity scoring**: full inputs, JSON output incl. `score`, `category`, `top_reasons[3]`, `confidence`, `required_resources`.
-6. **Cortex Search dedup + `ST_CLUSTER_KMEANS` clustering** auto-run in Dynamic Table every 10s.
-7. **Snowpark location-confidence UDF**: text input → `(lat, lng, confidence, reasoning)`.
-8. **Snowflake dispatch + routing stored proc**: greedy by severity × distance × resource-match; Mapbox Optimization for polyline; recompute on sev≥80 or unit-free.
+6. **Cortex embedding/vector dedup + `ST_CLUSTER_KMEANS` clustering** auto-run in Dynamic Table every 10s.
+7. **Snowpark location-confidence UDF**: place description → `(lat, lng, confidence, reasoning)` from seeded Houston places/intersections when phone GPS is unavailable.
+8. **Snowflake dispatch + routing stored proc**: greedy multi-resource assignment by severity × distance × resource-match; partial assignment is allowed and unmet resource needs are visible; Mapbox Optimization for polyline with fallback; recompute on sev≥80 or unit-free.
 9. **SSE push** from API → responder dashboard for new incidents + cluster updates + assignment changes.
 10. **Texas flood scenario JSON** (50 incidents) + admin "Start Scenario" endpoint.
 11. **Self-inventory toggle** propagating need-flags on incidents.
@@ -70,7 +87,6 @@ A two-sided web platform.
 
 - **ElevenLabs ConvAI** integration replaces text submit (drop-in via webhook → same incident shape).
 - **15-min GPS ping polling** from victim PWA `watchPosition`.
-- **Leaflet fallback** toggle for map (architect as adapter; build if time).
 - **TensorMesh caching** layer for repeated Cortex calls (sponsor prize secondary).
 - **Vercel + Railway deploy** so judges click real URLs.
 - **Hospital + shelter layer** on responder map.
@@ -87,7 +103,7 @@ A two-sided web platform.
 
 ## Snowflake Prize Angle (judge-facing)
 
-> "We don't just store data in Snowflake. The entire AI brain lives there. Cortex generates severity. Cortex Search dedups duplicate reports across 50 callers. Snowpark UDFs reason about landmarks. Streams + Tasks trigger triage with zero glue code. Dynamic Tables refresh our heatmap aggregates and resource rosters in real time. Geospatial functions cluster victims and rank routes. Everything you see on this dashboard, the warehouse computed."
+> "We don't just store data in Snowflake. The entire AI brain lives there. Cortex generates severity. Cortex embeddings dedup duplicate reports across 50 callers using vector similarity. Snowpark UDFs resolve GPS-missing place descriptions against Houston places and intersections. Streams + Tasks trigger triage with zero glue code. Dynamic Tables refresh our heatmap aggregates and resource rosters in real time. Geospatial functions cluster victims and rank routes. Everything you see on this dashboard, the warehouse computed."
 
 ---
 
@@ -98,7 +114,7 @@ A two-sided web platform.
 1. Open PWA link → optional one-time **pre-reg** (name, age, conditions, devices owned, emergency contact) saved to `profiles`.
 2. **Home**: Call button + Text button + scrolling prompt of *"things you should mention: where you are, what happened, who's hurt, what you need."*
 3. Victim picks Text (v1) → text area with same prompts → submit. *(v2: Call → ElevenLabs ConvAI agent.)*
-4. PWA captures GPS via `navigator.geolocation`. On failure, **manual-location fallback** screen: "describe where you are" → Snowpark UDF.
+4. PWA captures GPS via `navigator.geolocation`. On failure, **manual-location fallback** screen: "describe where you are" → Snowpark place-description UDF.
 5. Incident posted to API → Snowflake → Stream picks it up → Task fires Cortex severity + dedup → Dynamic Table updates.
 6. PWA shows **status screen**: severity score, ETA estimate, nearest responder type assigned. Live-updated via SSE-equivalent (PWA polls `/v1/incidents/:id` every 5s for v1; SSE if time).
 7. **Inventory toggle**: any pre-reg item flippable to "have/need" mid-incident; updates incident.
@@ -119,7 +135,7 @@ A two-sided web platform.
 
 ```
 Victim PWA
-  └─ POST /v1/incidents  (text + GPS or landmark-desc + profile_id)
+  └─ POST /v1/incidents  (text + GPS or place-description + profile_id)
         │
         ▼
   Hono API  ─────────►  Snowflake INCIDENTS (raw)
@@ -132,11 +148,11 @@ Victim PWA
                                 │
                   ┌─────────────┼─────────────┐
                   ▼             ▼             ▼
-            Cortex Severity   Cortex Search   Snowpark UDF
-            (score+resources) (vector dedup)  (location conf)
+            Cortex Severity   Cortex Embeddings   Snowpark UDF
+            (score+resources) (vector dedup)      (location conf)
                   └─────────────┼─────────────┘
                                 ▼
-                       INCIDENTS_ENRICHED  (Dynamic Table)
+                       INCIDENTS_ENRICHED  (physical table written by TRIAGE_TASK)
                                 │
                                 ▼
                        CLUSTERS  (ST_CLUSTER_KMEANS in Dynamic Table)

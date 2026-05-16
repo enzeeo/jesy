@@ -23,7 +23,7 @@
 | Snowflake geo    | GEOGRAPHY type, ST_DISTANCE, ST_CLUSTER_KMEANS, H3            | —                | Native spatial fns, no GIS extension needed.                                               |
 | Snowflake CDC    | STREAM + TASK on INCIDENTS_RAW                                | —                | Auto-triage trigger with zero glue code.                                                   |
 | Snowflake views  | Dynamic Tables (TARGET_LAG 15s)                               | —                | Auto-refresh enrichment + clusters + heatmap + roster.                                     |
-| Snowflake UDF    | Snowpark Python                                               | 3.10             | Landmark-to-coords reasoning UDF.                                                          |
+| Snowflake UDF    | Snowpark Python                                               | 3.10             | GPS-missing place-description resolver against seeded Houston places/intersections.          |
 | Validation       | Zod                                                           | 3.x              | Runtime validation of API bodies + Cortex JSON output.                                     |
 | Logging          | pino                                                          | 9.x              | Structured logs, fast.                                                                     |
 | Env loading      | dotenv                                                        | 16.x             | API only; Vite handles frontend env.                                                       |

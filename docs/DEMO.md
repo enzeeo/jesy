@@ -15,6 +15,7 @@ Target length: **4 minutes**. Practice twice before submitting.
 - [ ] Cleared previous scenario data: `TRUNCATE INCIDENTS_RAW;` then re-seed roster
 - [ ] Roster set: 5 fire, 4 EMT, 3 paramedic, 2 nurse, 2 doctor, 6 police, 10 volunteer
 - [ ] Open `scenarios/texas-flood.json` in a code window for show-and-tell
+- [ ] Route fallback ready: cached/straight-line route preview works if Mapbox Optimization is unavailable
 
 ---
 
@@ -58,7 +59,7 @@ Target length: **4 minutes**. Practice twice before submitting.
 
 **Do**: Zoom in. Show the cluster merging from 6 separate pins into one larger cluster icon.
 
-**Say**: *"Snowflake's Cortex Search is computing vector embeddings on every transcript. When semantic similarity exceeds 85% and the calls are within 100 meters, the Dynamic Table merges them into a single incident. Six tickets, one dispatch. No duplicate trucks."*
+**Say**: *"Snowflake Cortex is computing vector embeddings on every transcript. When semantic similarity exceeds 85% and the calls are within 100 meters, the Dynamic Table merges them into a single incident. Six tickets, one dispatch. No duplicate trucks."*
 
 **Optional flip to Snowflake tab**: Show `SELECT * FROM INCIDENT_CLUSTERS LIMIT 5;` — point at the `duplicate_id` column.
 
@@ -101,7 +102,7 @@ SHOW DYNAMIC TABLES;
 SELECT name, target_lag, last_refresh_status, scheduling_state FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
 ```
 
-**Say**: *"Every piece of intelligence you just saw — severity, summary, dedup, clustering, dispatch — runs natively in Snowflake. Cortex AI, Cortex Search, Streams + Tasks, Dynamic Tables, geospatial functions, Snowpark Python. Six features, one platform, the warehouse is the brain. Thank you."*
+**Say**: *"Every piece of intelligence you just saw — severity, summary, dedup, clustering, dispatch — runs natively in Snowflake. Cortex AI, Cortex embeddings and vector similarity, Streams + Tasks, Dynamic Tables, geospatial functions, Snowpark Python. Six capabilities, one platform, the warehouse is the brain. Thank you."*
 
 ---
 
@@ -111,7 +112,8 @@ SELECT name, target_lag, last_refresh_status, scheduling_state FROM TABLE(RESULT
 | ----------------------------------- | ------------------------------------------------------------------------ |
 | Scenario doesn't fire               | Pre-recorded screen recording in the same browser tab; switch and narrate. |
 | Cortex API timeout                  | Show pre-populated `INCIDENTS_ENRICHED` rows; "here's what it looks like after triage."  |
-| Map doesn't load (Mapbox token bad) | Fall back to Leaflet adapter; less flashy, still works.                  |
+| Map doesn't load (Mapbox token bad) | Fall back to cached screenshot/video; keep narrating Snowflake pipeline.  |
+| Mapbox Optimization fails           | Show cached route or straight-line preview; assignment still proves dispatch. |
 | Whole laptop dies                   | Slide deck with screenshots + the GitHub repo URL.                       |
 | Voice question from judge           | Refer to "Voice is wired via ElevenLabs in our nice-to-haves; the same incident shape works whether the input is voice or text."  |
 

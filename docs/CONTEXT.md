@@ -4,6 +4,22 @@
 
 ---
 
+## Language
+
+**Place description**:
+Free-text victim description of where they are when phone GPS is unavailable, usually naming nearby businesses, buildings, intersections, or shelters.
+_Avoid_: Landmark, manual location text
+
+**Unmet Resource Need**:
+A required responder type for an incident that could not be assigned because no matching responder is currently available.
+_Avoid_: Missing assignment, failed dispatch
+
+## Flagged ambiguities
+
+- "Landmark" sounded like famous landmarks only; resolved term is **Place description**, which includes ordinary nearby places like restaurants, gas stations, hospitals, schools, and cross-streets.
+
+---
+
 ## High-Level Architecture
 
 Three apps + one warehouse:
@@ -44,8 +60,8 @@ victim PWA
        ▼
 services/api
   - validate against @disaster/types
-  - if location is description-only, call:
-      CALL SNOWFLAKE.UDF_RESOLVE_LANDMARK(description, last_known_lat, last_known_lng)
+  - if GPS is unavailable and location is description-only, call:
+      CALL SNOWFLAKE.UDF_RESOLVE_PLACE_DESCRIPTION(description, last_known_lat, last_known_lng)
   - INSERT INTO INCIDENTS_RAW (...)
   - return { incident_id, status: 'received' }
 ```
@@ -95,7 +111,7 @@ WITH spatial AS (
     AND ts > DATEADD(minute, -30, CURRENT_TIMESTAMP())
 ),
 semantic AS (
-  -- Cortex Search: incidents within 100m AND cosine sim > 0.85 → merge
+  -- Cortex embeddings: incidents within 100m AND cosine sim > 0.85 → merge
   SELECT
     a.incident_id AS primary_id,
     b.incident_id AS duplicate_id
@@ -113,9 +129,13 @@ LEFT JOIN semantic ON spatial.incident_id = semantic.duplicate_id;
 ```sql
 CALL DISPATCH_INCIDENTS();
 -- For each open unassigned incident (severity DESC):
---   find nearest available responder unit matching required_resources
---   INSERT INTO ASSIGNMENTS (incident_id, responder_id, eta_sec)
---   UPDATE RESPONDERS SET status='busy' WHERE id=...
+--   for each required resource type:
+--     find nearest available responder unit matching that type
+--     if found:
+--       INSERT INTO ASSIGNMENTS (incident_id, responder_id, resource_type, eta_sec)
+--       UPDATE RESPONDERS SET status='busy' WHERE id=...
+--     if unavailable:
+--       INSERT INTO UNMET_RESOURCE_NEEDS (incident_id, resource_type, quantity_needed)
 ```
 
 Triggered by:
@@ -177,9 +197,9 @@ export interface IncidentLocation {
   lat: number;
   lng: number;
   accuracy_m?: number;
-  source: 'gps' | 'landmark_udf' | 'manual';
-  confidence?: number;         // 0..1, only when source='landmark_udf'
-  description?: string;        // original landmark text when applicable
+  source: 'gps' | 'place_description_udf' | 'manual';
+  confidence?: number;         // 0..1, only when source='place_description_udf'
+  description?: string;        // original place description when applicable
 }
 
 export interface IncidentRaw {
@@ -204,6 +224,7 @@ export interface SeverityResult {
 
 export interface IncidentEnriched extends IncidentRaw {
   severity: SeverityResult;
+  triage_status: 'ok' | 'degraded';
   summary: string;
   cluster_id?: string;
   primary_of_duplicate_group?: string;
@@ -222,10 +243,18 @@ export interface Assignment {
   assignment_id: string;
   incident_id: string;
   responder_id: string;
+  resource_type: ResourceType;
   eta_sec: number;
   polyline?: string;           // encoded polyline from Mapbox
   status: 'enroute' | 'on_scene' | 'completed';
   assigned_at: string;
+}
+
+export interface UnmetResourceNeed {
+  incident_id: string;
+  resource_type: ResourceType;
+  quantity_needed: number;
+  reason: 'no_available_responder' | 'responder_offline';
 }
 
 export interface ClusterView {
@@ -260,12 +289,13 @@ export type SSEEvent =
 ### Tables (transactional)
 - `PROFILES` — victim pre-reg
 - `INCIDENTS_RAW` — incoming reports
+- `INCIDENTS_ENRICHED` — physical task-written triage output with Cortex severity, summary, embedding, status
 - `RESPONDERS` — unit roster
 - `ASSIGNMENTS` — unit → incident
+- `UNMET_RESOURCE_NEEDS` — visible required resources with no available matching responder
 - `ROUTES` — Mapbox polylines cache
 
 ### Dynamic Tables (auto-refresh)
-- `INCIDENTS_ENRICHED` (TARGET_LAG 15s) — Cortex severity + summary + embedding joined
 - `INCIDENT_CLUSTERS` (TARGET_LAG 15s) — spatial + semantic clustering
 - `RESOURCE_ROSTER` (TARGET_LAG 5s) — live `available/total` per type
 - `SEVERITY_HEATMAP_H3` (TARGET_LAG 30s) — H3 bucket aggregates for deck.gl heatmap
@@ -280,10 +310,10 @@ export type SSEEvent =
 ### Stored Procedures
 - `DISPATCH_INCIDENTS()` — greedy assignment by severity × distance × resource match
 - `MARK_RESOLVED(incident_id)` — closes incident, frees responder
-- `START_SCENARIO(scenario_name)` — bulk-inserts staggered scenario data
+- `START_SCENARIO(scenario_name)` — optional stretch; v1 API owns 60-second scenario timing and inserts through `INCIDENTS_RAW`
 
 ### Snowpark Python UDFs
-- `UDF_RESOLVE_LANDMARK(description, last_lat, last_lng)` → `(lat, lng, confidence, reasoning)`
+- `UDF_RESOLVE_PLACE_DESCRIPTION(description, last_lat, last_lng)` → `(lat, lng, confidence, reasoning)` from a seeded Houston places/intersections table
 
 ### Cortex Functions used
 - `SNOWFLAKE.CORTEX.COMPLETE` — severity scoring + required_resources JSON
@@ -302,7 +332,7 @@ export type SSEEvent =
 | ------ | ----------------------------- | ------------- | ------------------------------------------------------------ |
 | POST   | `/v1/profiles`                | victim        | Create/upsert pre-reg profile                                |
 | GET    | `/v1/profiles/:device_id`     | victim        | Load existing profile                                        |
-| POST   | `/v1/incidents`               | victim        | Submit new incident; runs landmark UDF if needed             |
+| POST   | `/v1/incidents`               | victim        | Submit new incident; runs place-description UDF if GPS is unavailable |
 | GET    | `/v1/incidents/:id`           | victim/admin  | Read enriched incident (status screen polling)               |
 | PATCH  | `/v1/incidents/:id/inventory` | victim        | Update need/have flags mid-incident                          |
 | GET    | `/v1/dashboard/state`         | responder     | Initial dashboard snapshot (incidents, clusters, roster)     |
@@ -313,6 +343,12 @@ export type SSEEvent =
 | POST   | `/v1/admin/scenario/inject`   | admin         | Drop a single high-sev incident mid-demo (judge demo trick)  |
 
 All responses are typed against `@disaster/types`.
+
+### Demo Auth Boundary
+
+- Victim endpoints are anonymous and scoped by generated `device_id`.
+- Responder UI may use hardcoded `admin/admin` for local demo login.
+- Mutating responder/admin API endpoints require `Authorization: Bearer $ADMIN_TOKEN`: `/v1/roster`, `/v1/assignments/:id/status`, `/v1/admin/*`.
 
 ---
 
@@ -349,7 +385,6 @@ disaster-relief/
 │       │   ├── lib/api.ts
 │       │   ├── lib/sse.ts
 │       │   ├── lib/map/mapbox.ts   # adapter
-│       │   ├── lib/map/leaflet.ts  # nice-to-have fallback
 │       │   └── main.tsx
 │       ├── vite.config.ts
 │       └── package.json
@@ -372,10 +407,10 @@ disaster-relief/
 ├── snowflake/
 │   ├── 01_schema.sql               # tables, streams
 │   ├── 02_cortex_triage.sql        # triage task using Cortex
-│   ├── 03_dynamic_tables.sql       # INCIDENTS_ENRICHED, CLUSTERS, ROSTER, HEATMAP
+│   ├── 03_dynamic_tables.sql       # CLUSTERS, ROSTER, HEATMAP derived views
 │   ├── 04_dispatch_proc.sql        # DISPATCH_INCIDENTS stored proc
 │   ├── 05_udf_location.py          # Snowpark Python UDF
-│   ├── 06_scenario_proc.sql        # START_SCENARIO stored proc
+│   ├── 06_scenario_proc.sql        # optional Snowflake scenario helpers; API owns v1 timing
 │   └── README.md                   # apply-order instructions
 ├── scenarios/
 │   └── texas-flood.json            # 50 incident specs

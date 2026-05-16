@@ -29,54 +29,65 @@ See `docs/TEMPLATE.md` for exact spec. Output:
 
 ---
 
+## Critical Path — H0 to H3 Contract-First Checklist
+
+These are the cross-track gates that prevent UI/API/Snowflake drift. If these are late, everyone shifts to unblock them before adding polish.
+
+- [ ] H1.5: Template scaffold merged and all tracks can run `pnpm install && pnpm dev`
+- [ ] H2: `@disaster/types` exports final v1 shapes for `IncidentRaw`, `IncidentEnriched`, `SeverityResult`, `Assignment`, `UnmetResourceNeed`, and `SSEEvent`
+- [ ] H2: Snowflake `01_schema.sql` applies and contains `INCIDENTS_RAW`, physical `INCIDENTS_ENRICHED`, `RESPONDERS`, `ASSIGNMENTS`, `UNMET_RESOURCE_NEEDS`, `ROUTES`, and `INCIDENT_STREAM`
+- [ ] H2.5: API `/health` confirms process boot; Snowflake connection can run `SELECT 1`
+- [ ] H3: `POST /v1/incidents` inserts one GPS-backed test incident into `INCIDENTS_RAW`
+- [ ] H3: `GET /v1/dashboard/state` returns typed fixture-or-live shape so responder UI can hydrate normalized store
+- [ ] H3: Track D shares severity JSON schema and degraded fallback shape; Tracks B/C stop changing it without sync
+
+---
+
 ## Track A — Victim PWA (1 person)
 
 Owner: **___________**
 
 ### Hour-by-hour
 
-**H0–H1: Onboard + Routing**
-- [ ] React Router setup with routes: `/onboard`, `/`, `/incident`, `/status/:id`, `/inventory`, `/manual-location`
+**H0–H1: Thin submitter shell**
+- [ ] React Router setup with routes: `/`, `/incident`, `/status/:id`, `/manual-location`
 - [ ] Tailwind theme: dark mode default, high-contrast red/green/amber
-- [ ] PWA manifest + install prompt
-- [ ] Service worker stub (network-first, but queue POSTs on offline)
+- [ ] PWA manifest stub only; install prompt is secondary
+- [ ] Service worker stub only; production-grade offline queue is secondary
 
-**H1–H3: Pre-reg flow**
-- [ ] `pages/Onboard.tsx`: form (name, age, conditions multiselect, devices multiselect, emergency contact)
-- [ ] Save to `localStorage` AND `POST /v1/profiles`
-- [ ] Skip-able ("I'll do this later") — sets a `device_id` only
-- [ ] On next launch, route to `/` if profile exists, else `/onboard`
-
-**H3–H6: Home + incident submit**
+**H1–H3: Home + incident submit**
 - [ ] `pages/Home.tsx`: two huge buttons (Call / Text), prompt panel ("Things to say: where you are, what happened, who needs help, what you have, what you need")
 - [ ] **Call button** = stub for v1 (alerts "voice coming soon"; nice-to-have wires to ConvAI). DO NOT block on this.
 - [ ] **Text button** → `pages/Incident.tsx`
-- [ ] `Incident.tsx`: textarea + dynamic checklist (medical / trapped / fire / water / shelter / power / evacuation), inventory have/need checklists
+- [ ] `Incident.tsx`: textarea + dynamic checklist (medical / trapped / fire / water / shelter / power / evacuation)
+- [ ] Generate/persist anonymous `device_id` in `localStorage`; optional `profile_id` is not required for first live submit
 - [ ] On submit: capture GPS (`navigator.geolocation.getCurrentPosition`). If denied/timeout → route to `/manual-location`
 - [ ] `POST /v1/incidents` then route to `/status/:id`
 
-**H6–H8: Manual location fallback**
-- [ ] `pages/ManualLocation.tsx`: textarea ("describe where you are — landmarks, cross-streets, building name")
-- [ ] Pass description to `POST /v1/incidents` with `location.source = 'landmark_udf'`
+**H3–H5: Manual location fallback**
+- [ ] `pages/ManualLocation.tsx`: textarea ("describe where you are — nearby buildings, restaurants, gas stations, cross-streets")
+- [ ] Pass description to `POST /v1/incidents` with `location.source = 'place_description_udf'`
 - [ ] Show returned coords on a tiny Mapbox static-image preview with confidence radius
 
-**H8–H10: Live status screen**
+**H5–H7: Live status screen**
 - [ ] `pages/Status.tsx`: poll `GET /v1/incidents/:id` every 5s
 - [ ] Show severity score (big number, color-coded), category badge, 3 reasons, assigned responder type + ETA when available
-- [ ] Inventory toggle component embedded for mid-incident updates
 
-**H10–H12: Inventory page + polish**
-- [ ] `pages/Inventory.tsx`: each device → toggle Have/Need
-- [ ] PATCH `/v1/incidents/:id/inventory` on toggle
+**H7–H10: Pre-reg + inventory add-back**
+- [ ] `pages/Onboard.tsx`: optional profile form (name, age, conditions, devices, emergency contact)
+- [ ] Save to `localStorage` AND `POST /v1/profiles`
+- [ ] Add inventory have/need checklists to `Incident.tsx`
+- [ ] PATCH `/v1/incidents/:id/inventory` from status page only if API endpoint is ready
 - [ ] Polish typography, button states, accessibility (aria-labels, focus rings)
 
-**H12+: Stretch**
+**H10+: Stretch**
+- [ ] Offline queue smoke test: DevTools offline → submit → reconnect → flushes one queued incident
+- [ ] Full PWA install prompt and production-grade offline queue semantics
 - [ ] 15-min GPS ping (`watchPosition`) when incident is open
 - [ ] Wire Call button to ElevenLabs ConvAI agent (drop-in)
-- [ ] Offline queue end-to-end test (DevTools offline → submit → reconnect → flushes)
 
 ### Deliverables
-- `apps/victim` fully functional end-to-end with text submission
+- `apps/victim` thin live submitter: one GPS/place-description incident → status page
 - All API contract types imported from `@disaster/types`
 - No domain types defined inline
 
@@ -109,13 +120,20 @@ Owner: **___________**
 
 **H5–H7: SSE + state**
 - [ ] `lib/sse.ts`: `EventSource('/v1/stream')` with reconnect-on-error
-- [ ] Zustand or Jotai store: `incidents[]`, `clusters[]`, `roster[]`, `assignments[]`, `routes[]`
-- [ ] Reducers for each SSE event type
+- [ ] Zustand store normalized by ID/type:
+  - `incidentsById: Record<string, IncidentEnriched>`
+  - `clustersById: Record<string, ClusterView>`
+  - `assignmentsById: Record<string, Assignment>`
+  - `routesByResponderId: Record<string, RoutePreview>`
+  - `rosterByType: Partial<Record<ResourceType, ResourceRoster>>`
+- [ ] Upsert reducers for each SSE event type; never append blindly
+- [ ] Sorted selectors for queue order, active clusters, responder routes, and roster rows
 - [ ] On mount: `GET /v1/dashboard/state` for initial snapshot
 
 **H7–H9: Sidebars + side sheet**
 - [ ] `components/IncidentQueue.tsx` (right sidebar, sortable by severity desc, status filter)
 - [ ] `components/IncidentSheet.tsx` (side sheet): transcript, summary, profile snippet, severity card with 3 reasons, required_resources chips, assigned unit + ETA, "Mark Resolved" button
+- [ ] Incident sheet shows warning chip when `triage_status='degraded'` so dispatchers know AI output fell back
 - [ ] `components/FiltersPanel.tsx` (left sidebar): severity ≥ slider, category checkboxes, status, time window, responder dropdown
 
 **H9–H11: Resource roster + stats bar**
@@ -129,13 +147,12 @@ Owner: **___________**
 - [ ] "Recompute" button → `POST /v1/admin/recompute-routes`
 
 **H13–H15: Demo polish**
-- [ ] Smooth pin entry animation (Framer Motion)
-- [ ] Cluster merge animation when dedup fires
-- [ ] Route recompute animation: old polyline fades, new one draws
+- [ ] Smooth pin entry animation (Framer Motion) — optional polish; cut if Snowflake/dispatch is not demo-ready
+- [ ] Cluster merge animation when dedup fires — optional polish; cut if Snowflake/dispatch is not demo-ready
+- [ ] Route recompute animation: old polyline fades, new one draws — optional polish; cut if Snowflake/dispatch is not demo-ready
 - [ ] Toasts on new sev≥90 incident ("⚠ Critical incident, dispatching")
 
 **H15+: Stretch**
-- [ ] Leaflet adapter (`lib/map/leaflet.ts`) as fallback toggle
 - [ ] H3 grid visualization toggle
 - [ ] Analytics tab (severity histogram, resource utilization over time)
 
@@ -163,14 +180,14 @@ Owner: **___________**
 **H1–H4: Victim endpoints**
 - [ ] `POST /v1/profiles` — upsert by `device_id`
 - [ ] `GET /v1/profiles/:device_id`
-- [ ] `POST /v1/incidents` — validate, if landmark-only call `UDF_RESOLVE_LANDMARK`, INSERT INTO `INCIDENTS_RAW`, return `{ incident_id, status }`
+- [ ] `POST /v1/incidents` — validate, if GPS is unavailable call `UDF_RESOLVE_PLACE_DESCRIPTION`, INSERT INTO `INCIDENTS_RAW`, return `{ incident_id, status }`
 - [ ] `GET /v1/incidents/:id` — read from `INCIDENTS_ENRICHED` (joins severity)
 - [ ] `PATCH /v1/incidents/:id/inventory`
 
 **H4–H6: Dashboard endpoints**
 - [ ] `GET /v1/dashboard/state` — single query gathering open incidents, clusters, roster, active assignments + routes
-- [ ] `POST /v1/roster` — bulk upsert RESPONDERS rows
-- [ ] `POST /v1/assignments/:id/status` — call `MARK_ON_SCENE` or `MARK_RESOLVED` stored proc
+- [ ] `POST /v1/roster` — bulk upsert RESPONDERS rows; require `Authorization: Bearer $ADMIN_TOKEN`
+- [ ] `POST /v1/assignments/:id/status` — call `MARK_ON_SCENE` or `MARK_RESOLVED` stored proc; require `Authorization: Bearer $ADMIN_TOKEN`
 
 **H6–H9: SSE**
 - [ ] `lib/sse.ts`: in-memory `Set<ResponseWriter>` of connected clients
@@ -183,16 +200,24 @@ Owner: **___________**
 - [ ] On `assignment_new` SSE event, queue a route computation; persist to `ROUTES` table; emit `route_update`
 
 **H11–H13: Admin + scenario**
-- [ ] `lib/scenarios.ts`: load JSON, schedule `setTimeout` per incident (staggered timestamps from file)
-- [ ] `POST /v1/admin/scenario/start` — runs scheduler, returns ETA to completion
-- [ ] `POST /v1/admin/scenario/inject` — single high-sev incident with auto-generated transcript
-- [ ] `POST /v1/admin/recompute-routes` — re-fires dispatch + route compute
+- [ ] `lib/scenarios.ts`: load canonical scenario data, schedule `setTimeout` per incident (staggered timestamps from file)
+- [ ] `POST /v1/admin/scenario/start` — requires `Authorization: Bearer $ADMIN_TOKEN`, runs scheduler, returns ETA to completion
+- [ ] `POST /v1/admin/scenario/inject` — requires `Authorization: Bearer $ADMIN_TOKEN`, inserts single high-sev incident with auto-generated transcript
+- [ ] `POST /v1/admin/recompute-routes` — requires `Authorization: Bearer $ADMIN_TOKEN`, re-fires dispatch + route compute
 
 **H13–H15: Resilience + polish**
 - [ ] Retry on Snowflake transient errors (3 attempts, exponential backoff)
 - [ ] Structured logging (`pino`) with request IDs
 - [ ] Error response shape: `{ error: { code, message } }`
 - [ ] CORS allow-list from `.env`
+- [ ] Route fallback: if Mapbox Optimization fails, emit cached route if available or straight-line preview with `route_source='fallback'`
+- [ ] API tests with mocked Snowflake:
+  - `POST /v1/incidents` validates required text + GPS/place-description input
+  - `POST /v1/incidents` returns typed `{ incident_id, status }` on insert success
+  - Admin/roster mutation endpoints reject missing or wrong `ADMIN_TOKEN`
+  - Snowflake transient failure returns `{ error: { code, message } }` and logs request ID
+  - `GET /v1/dashboard/state` returns typed incidents/clusters/roster/assignments shape
+  - `POST /v1/admin/scenario/start` schedules fixture incidents without blocking response
 
 **H15+: Stretch**
 - [ ] Cloudflare Tunnel script for ElevenLabs webhook
@@ -218,17 +243,19 @@ Owner: **___________**
 **H0–H1: Account access + schema**
 - [ ] Confirm Snowflake sponsor account access. Get warehouse name + DB + schema.
 - [ ] Confirm Cortex AI is enabled in the region.
+- [ ] Spike whether true Cortex Search service/index is available in this Snowflake account; if not, proceed with Cortex embeddings + `VECTOR_COSINE_SIMILARITY`
 - [ ] Run `snowflake/01_schema.sql`: create `PROFILES`, `INCIDENTS_RAW`, `RESPONDERS`, `ASSIGNMENTS`, `ROUTES`, indexes, primary keys, `INCIDENT_STREAM`.
 - [ ] Insert 1 row in each table for sanity check.
 
 **H1–H3: Cortex triage SQL**
 - [ ] `snowflake/02_cortex_triage.sql`: `TRIAGE_TASK` that runs on `INCIDENT_STREAM`
 - [ ] Compose prompt for `SNOWFLAKE.CORTEX.COMPLETE` (claude-3-5-sonnet) with strict JSON schema for `SeverityResult`
-- [ ] Test on 3 manually-inserted incidents; verify JSON parses
+- [ ] Insert task output into physical `INCIDENTS_ENRICHED` table: raw incident fields + parsed severity JSON + `triage_status` + summary + embedding + default `status='open'`
+- [ ] On Cortex JSON parse failure, store visible degraded fallback: `score=50`, `category='unknown'`, `confidence=0.2`, fallback reasons, `triage_status='degraded'`
+- [ ] Test on 3 manually-inserted incidents; verify valid JSON parses and malformed JSON creates degraded fallback
 
 **H3–H6: Dynamic Tables**
 - [ ] `snowflake/03_dynamic_tables.sql`:
-  - `INCIDENTS_ENRICHED` (joins triage output, summary, embedding, profile)
   - `INCIDENT_CLUSTERS` (`ST_CLUSTER_KMEANS` + `VECTOR_COSINE_SIMILARITY` dedup)
   - `RESOURCE_ROSTER` (rollup from RESPONDERS by type)
   - `SEVERITY_HEATMAP_H3` (H3 bucket aggregates)
@@ -237,30 +264,36 @@ Owner: **___________**
 **H6–H9: Dispatch stored proc**
 - [ ] `snowflake/04_dispatch_proc.sql`: `DISPATCH_INCIDENTS()` procedure
   - For each open incident (ORDER BY severity DESC):
-    - Find required resources from severity JSON
+    - Read `required_resources` from severity JSON
     - For each required type, find nearest available responder (`ST_DISTANCE`)
-    - If found, INSERT INTO ASSIGNMENTS, UPDATE RESPONDERS SET status='busy'
+    - If found, INSERT INTO `ASSIGNMENTS` with `resource_type`, UPDATE `RESPONDERS` SET `status='busy'`
+    - If not found, INSERT/UPSERT `UNMET_RESOURCE_NEEDS` so the dashboard shows partial assignment clearly
+  - Keep schema optimizer-ready: assignment rows are per responder/resource type, not one opaque blob per incident
 - [ ] `DISPATCH_TASK` scheduled every 30s + manually triggered by API
 
 **H9–H11: Snowpark UDF for location**
-- [ ] `snowflake/05_udf_location.py`: `UDF_RESOLVE_LANDMARK(description, last_lat, last_lng)`
-  - Use `_snowflake.snowpark_python.SnowflakeFile` to call Cortex from Python? No — call SNOWFLAKE.CORTEX.COMPLETE via `session.sql(...)` inside the UDF
-  - Parse JSON response: `{ lat, lng, confidence, reasoning }`
-  - Fallback: return `(last_lat, last_lng, 0.3, 'fallback to last GPS')` on parse error
-- [ ] Register UDF, test with 5 sample landmark descriptions
+- [ ] Add `PLACES` seed data: Houston restaurants, gas stations, hospitals, schools, shelters, intersections, and scenario-specific buildings
+- [ ] `snowflake/05_udf_location.py`: `UDF_RESOLVE_PLACE_DESCRIPTION(description, last_lat, last_lng)`
+  - Tokenize the place description and fuzzy-match against seeded `PLACES`
+  - Prefer candidates near `last_lat/last_lng` when available; otherwise prefer scenario bounding box
+  - Return `{ lat, lng, confidence, reasoning, matched_place_names }`
+  - Fallback: return `(last_lat, last_lng, 0.3, 'fallback to last GPS')` if available; otherwise ask the API to return a low-confidence manual-location error
+- [ ] Register UDF, test with 5 sample place descriptions such as "near the McDonald's and gas station by I-10"
 
 **H11–H13: Scenario data**
 - [ ] Author `scenarios/texas-flood.json` (50 incidents): vary location (across Houston grid), severity (15 critical, 20 medium, 15 low), category mix (10 medical, 8 trapped, 12 water, 6 fire, 4 power, 5 shelter, 5 evacuation)
-- [ ] Write `snowflake/06_scenario_proc.sql`: `START_SCENARIO(name)` — reads from a staging table or VARIANT input, inserts staggered
-- [ ] Alternatively: API loads JSON and calls direct INSERTs (simpler; pick this)
+- [ ] Ensure scenario incidents insert through the same `INCIDENTS_RAW` path as live victim reports
+- [ ] `snowflake/06_scenario_proc.sql` is optional v1: only add if time remains for canonical Snowflake scenario tables/procs; API owns 60-second demo timing
 
 **H13–H15: End-to-end smoke**
 - [ ] Trigger scenario via API → watch `INCIDENTS_RAW` fill → confirm Cortex fires → check `INCIDENTS_ENRICHED` populates → confirm clustering happens → confirm dispatch fires
 - [ ] Tune `TARGET_LAG` if too slow; add manual `REFRESH` triggers in API after scenario start to force fast first-pass
+- [ ] Smoke checklist: 3 manual incidents enrich, clusters refresh, dispatch creates assignment rows, unmet resources appear when roster is depleted
 
 **H15+: Stretch**
 - [ ] Cortex Search index instead of cosine similarity (proper Search API)
 - [ ] TensorMesh caching wrapper around `CORTEX.COMPLETE`
+- [ ] API-only live Mapbox place search for arbitrary business names, then store chosen coords/confidence in Snowflake
 - [ ] Snowflake Native App packaging (skip, way too much for 18h)
 
 ### Deliverables
@@ -299,5 +332,8 @@ Owner: **___________**
 - Judge can see resource roster decrement live.
 - Snowflake worksheet is on standby to show actual SQL + Dynamic Tables refreshing.
 - All 6 Snowflake features can be pointed at on screen.
+- `pnpm typecheck` passes across the workspace.
+- API tests pass for incident submit, dashboard state shape, scenario start, and error response shape.
+- Snowflake smoke checklist passes for enrich → cluster → dispatch → unmet resource needs.
 
 If any of the above is broken at H16, **prioritize fixing over polish**.

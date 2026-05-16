@@ -168,6 +168,7 @@ pnpm init
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -182,7 +183,8 @@ pnpm init
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "latest"
   }
 }
 ```
@@ -507,13 +509,29 @@ CREATE TABLE IF NOT EXISTS INCIDENTS_RAW (
   lat                 FLOAT,
   lng                 FLOAT,
   accuracy_m          FLOAT,
-  location_source     STRING,         -- 'gps' | 'landmark_udf' | 'manual'
+  location_source     STRING,         -- 'gps' | 'place_description_udf' | 'manual'
   location_confidence FLOAT,
   raw_text            STRING,
   needs               VARIANT,
   inventory_have      ARRAY,
   inventory_need      ARRAY,
   ts                  TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- `INCIDENTS_ENRICHED` is a physical table written by TRIAGE_TASK, not a Dynamic Table.
+CREATE TABLE IF NOT EXISTS INCIDENTS_ENRICHED (
+  incident_id         STRING PRIMARY KEY,
+  profile_id          STRING,
+  device_id           STRING,
+  lat                 FLOAT,
+  lng                 FLOAT,
+  raw_text            STRING,
+  severity            VARIANT,
+  triage_status       STRING DEFAULT 'ok',  -- ok | degraded
+  summary             STRING,
+  embedding           VECTOR(FLOAT, 768),
+  status              STRING DEFAULT 'open',
+  enriched_at         TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
 -- =============================================================
@@ -535,9 +553,21 @@ CREATE TABLE IF NOT EXISTS ASSIGNMENTS (
   assignment_id       STRING PRIMARY KEY,
   incident_id         STRING,
   responder_id        STRING,
+  resource_type       STRING,
   eta_sec             NUMBER,
   status              STRING DEFAULT 'enroute',   -- enroute | on_scene | completed
   assigned_at         TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- =============================================================
+-- UNMET_RESOURCE_NEEDS
+-- =============================================================
+CREATE TABLE IF NOT EXISTS UNMET_RESOURCE_NEEDS (
+  incident_id         STRING,
+  resource_type       STRING,
+  quantity_needed     NUMBER,
+  reason              STRING,         -- no_available_responder | responder_offline
+  updated_at          TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
 -- =============================================================
@@ -564,10 +594,10 @@ CREATE OR REPLACE STREAM INCIDENT_STREAM ON TABLE INCIDENTS_RAW
 
 1. `01_schema.sql` — tables + stream
 2. `02_cortex_triage.sql` — triage task (Cortex severity)
-3. `03_dynamic_tables.sql` — INCIDENTS_ENRICHED + INCIDENT_CLUSTERS + RESOURCE_ROSTER + HEATMAP
+3. `03_dynamic_tables.sql` — INCIDENT_CLUSTERS + RESOURCE_ROSTER + SEVERITY_HEATMAP_H3
 4. `04_dispatch_proc.sql` — DISPATCH_INCIDENTS stored proc + DISPATCH_TASK
-5. `05_udf_location.py` — Snowpark UDF for landmark → coords
-6. `06_scenario_proc.sql` — START_SCENARIO bulk-insert proc (optional; API can do this too)
+5. `05_udf_location.py` — Snowpark UDF for GPS-missing place description → coords
+6. `06_scenario_proc.sql` — optional Snowflake scenario helpers; API owns v1 demo timing
 
 After applying, run `SHOW DYNAMIC TABLES;` and confirm `last_refresh_status = SUCCEEDED`.
 ```
@@ -675,7 +705,7 @@ Notify the team: pull `main`, branch off:
 
 - Storybook
 - ESLint / Prettier configs (use editor defaults; lint at end if time)
-- Tests (we are not writing tests in 18h)
+- Full frontend/E2E test suites (API tests are required; broader test suites are out of scope)
 - CI/CD
 - Docker
 - Husky / lint-staged
