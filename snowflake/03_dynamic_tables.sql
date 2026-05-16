@@ -1,0 +1,5 @@
+-- snowflake/03_dynamic_tables.sql
+-- TODO Track D H3–H6:
+--   INCIDENT_CLUSTERS  (ST_CLUSTER_KMEANS + VECTOR_COSINE_SIMILARITY dedup)
+--   RESOURCE_ROSTER    (rollup of RESPONDERS by type)
+--   SEVERITY_HEATMAP_H3 (H3 bucket aggregates for deck.gl)

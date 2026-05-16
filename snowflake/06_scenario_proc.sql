@@ -1,0 +1,3 @@
+-- snowflake/06_scenario_proc.sql
+-- Optional v1: API owns 60-second demo timing; only fill this in if
+-- time remains to move scenario scheduling into Snowflake.

@@ -1,0 +1,3 @@
+-- snowflake/04_dispatch_proc.sql
+-- TODO Track D H6–H9: DISPATCH_INCIDENTS() greedy multi-resource
+-- assignment + UNMET_RESOURCE_NEEDS upsert + DISPATCH_TASK every 30s.

@@ -1,0 +1,39 @@
+{
+  "name": "texas-flood",
+  "label": "Houston Flash Flood, May 2026",
+  "center": { "lat": 29.7604, "lng": -95.3698 },
+  "duration_sec": 60,
+  "notes": "v1 fixture stub — Track D expands this from 12 to 50 hand-authored incidents for the judged demo. UI consumes the typed fixture in packages/fixtures during Fixture UI Preview.",
+  "incidents": [
+    {
+      "delay_sec": 2,
+      "lat": 29.791,
+      "lng": -95.487,
+      "raw_text": "I'm trapped on my roof, water is up to my chest. I'm 67 and diabetic, I have my insulin but I'm cold and shaking.",
+      "needs": { "medical": true, "trapped": true, "water": true },
+      "inventory_have": ["insulin"],
+      "inventory_need": [],
+      "profile": { "age": 67, "conditions": ["diabetes"], "devices_owned": ["insulin"] }
+    },
+    {
+      "delay_sec": 4,
+      "lat": 29.74,
+      "lng": -95.40,
+      "raw_text": "Power is out, my baby needs formula and I can't drive out, streets are flooded around me.",
+      "needs": { "shelter": true, "water": true, "power": true },
+      "inventory_have": [],
+      "inventory_need": [],
+      "profile": { "age": 28, "conditions": ["nursing_mother"], "devices_owned": [] }
+    },
+    {
+      "delay_sec": 6,
+      "lat": 29.81,
+      "lng": -95.32,
+      "raw_text": "Apartment fire on the second floor, lots of smoke, six families still inside, the stairwell is blocked.",
+      "needs": { "fire": true, "trapped": true },
+      "inventory_have": [],
+      "inventory_need": [],
+      "profile": null
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+-- snowflake/02_cortex_triage.sql
+-- TODO Track D H1–H3: TRIAGE_TASK fires on INCIDENT_STREAM,
+-- calls SNOWFLAKE.CORTEX.COMPLETE for severity JSON +
+-- SNOWFLAKE.CORTEX.SUMMARIZE + SNOWFLAKE.CORTEX.EMBED_TEXT_768.
+-- On malformed JSON, writes degraded fallback row with
+-- triage_status='degraded'.
