@@ -74,6 +74,15 @@ const DEFAULT_FILTERS: Filters = {
   responderType: 'all',
 };
 
+const EMPTY_RESOURCE_ROSTER_BY_TYPE: Record<ResourceType, ResourceRoster> =
+  RESOURCE_TYPES.reduce(
+    (accumulator, type) => {
+      accumulator[type] = { type, total: 0, available: 0, busy: 0 };
+      return accumulator;
+    },
+    {} as Record<ResourceType, ResourceRoster>,
+  );
+
 // ---------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------
@@ -277,8 +286,7 @@ export function selectRoutes(s: DashboardStore): RoutePreview[] {
 
 export function selectRoster(s: DashboardStore): ResourceRoster[] {
   return RESOURCE_TYPES.map(
-    (t) =>
-      s.rosterByType[t] ?? { type: t, total: 0, available: 0, busy: 0 },
+    (type) => s.rosterByType[type] ?? EMPTY_RESOURCE_ROSTER_BY_TYPE[type],
   );
 }
 

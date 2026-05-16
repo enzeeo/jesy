@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { severityBand } from '@disaster/types';
 
@@ -19,7 +20,7 @@ interface Props {
 
 export default function RouteDrawer({ adapter }: Props) {
   const [collapsed, setCollapsed] = useState(false);
-  const routes = useDashboardStore(selectRoutes);
+  const routes = useDashboardStore(useShallow(selectRoutes));
   const filters = useDashboardStore((s) => s.filters);
   const respondersById = useDashboardStore((s) => s.respondersById);
   const incidentsById = useDashboardStore((s) => s.incidentsById);

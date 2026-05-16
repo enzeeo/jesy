@@ -3,10 +3,12 @@ import {
   RESOURCE_ICON,
   RESOURCE_LABEL,
 } from './severity';
+import { useShallow } from 'zustand/react/shallow';
+
 import { selectRoster, useDashboardStore } from '../lib/store';
 
 export default function ResourceRoster() {
-  const roster = useDashboardStore(selectRoster);
+  const roster = useDashboardStore(useShallow(selectRoster));
 
   return (
     <div className="absolute right-4 top-4 z-20 w-60 rounded-md border border-zinc-800 bg-zinc-950/85 p-2 shadow-xl backdrop-blur">

@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import { ScatterplotLayer } from '@deck.gl/layers';
+import { LineLayer, ScatterplotLayer } from '@deck.gl/layers';
 import { AnimatePresence, motion } from 'framer-motion';
+import { useShallow } from 'zustand/react/shallow';
 
 import 'mapbox-gl/dist/mapbox-gl.css';
 
-import type { IncidentEnriched, SeverityBand } from '@disaster/types';
+import type { IncidentEnriched, RoutePreview, SeverityBand } from '@disaster/types';
 import { severityBand } from '@disaster/types';
 
-import { selectIncidents, useDashboardStore } from '../lib/store';
+import { selectIncidents, selectRoutes, useDashboardStore } from '../lib/store';
 import { SEVERITY_BAND_HEX } from './severity';
 
 const HOUSTON = { lat: 29.7604, lng: -95.3698 };
@@ -37,6 +38,45 @@ function bandColor(band: SeverityBand): [number, number, number] {
   }
 }
 
+interface RouteSegment {
+  id: string;
+  route: RoutePreview;
+  from: { lat: number; lng: number };
+  to: { lat: number; lng: number };
+  isSelected: boolean;
+}
+
+function makeRouteSegments(
+  routes: RoutePreview[],
+  incidentsById: Record<string, IncidentEnriched>,
+  respondersById: ReturnType<typeof useDashboardStore.getState>['respondersById'],
+  selectedResponderId: string | null,
+): RouteSegment[] {
+  const segments: RouteSegment[] = [];
+  for (const route of routes) {
+    const responder = respondersById[route.responder_id];
+    let current = responder?.current_location;
+    if (!current) continue;
+
+    const orderedStops = [...route.stops].sort((a, b) => a.order - b.order);
+    for (const stop of orderedStops) {
+      const incident = incidentsById[stop.incident_id];
+      if (!incident) continue;
+      segments.push({
+        id: `${route.responder_id}-${stop.incident_id}-${stop.order}`,
+        route,
+        from: current,
+        to: incident.location,
+        isSelected:
+          selectedResponderId === null ||
+          selectedResponderId === route.responder_id,
+      });
+      current = incident.location;
+    }
+  }
+  return segments;
+}
+
 export default function MapView() {
   if (TOKEN) return <MapboxMap />;
   return <FallbackMap />;
@@ -51,8 +91,23 @@ function MapboxMap() {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
 
-  const incidents = useDashboardStore(selectIncidents);
+  const incidents = useDashboardStore(useShallow(selectIncidents));
+  const routes = useDashboardStore(useShallow(selectRoutes));
+  const incidentsById = useDashboardStore((s) => s.incidentsById);
+  const respondersById = useDashboardStore((s) => s.respondersById);
+  const selectedResponderId = useDashboardStore((s) => s.selectedResponderId);
   const select = useDashboardStore((s) => s.selectIncident);
+
+  const routeSegments = useMemo(
+    () =>
+      makeRouteSegments(
+        routes,
+        incidentsById,
+        respondersById,
+        selectedResponderId,
+      ),
+    [routes, incidentsById, respondersById, selectedResponderId],
+  );
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -105,6 +160,29 @@ function MapboxMap() {
     if (!overlayRef.current) return;
 
     const layers = [
+      new LineLayer<RouteSegment>({
+        id: 'route-lines',
+        data: routeSegments,
+        getSourcePosition: (s: RouteSegment) => [s.from.lng, s.from.lat],
+        getTargetPosition: (s: RouteSegment) => [s.to.lng, s.to.lat],
+        getColor: (s: RouteSegment) =>
+          s.route.route_source === 'fallback'
+            ? [245, 158, 11, s.isSelected ? 230 : 90]
+            : s.route.route_source === 'cached'
+              ? [148, 163, 184, s.isSelected ? 220 : 80]
+              : [56, 189, 248, s.isSelected ? 230 : 90],
+        getWidth: (s: RouteSegment) => (s.isSelected ? 4 : 2),
+        widthUnits: 'pixels',
+        updateTriggers: {
+          getColor: selectedResponderId,
+          getWidth: selectedResponderId,
+        },
+        transitions: {
+          getSourcePosition: 250,
+          getTargetPosition: 250,
+          getColor: 200,
+        },
+      }),
       new ScatterplotLayer<IncidentEnriched>({
         id: 'incident-glow',
         data: incidents,
@@ -148,7 +226,7 @@ function MapboxMap() {
     ];
 
     overlayRef.current.setProps({ layers });
-  }, [incidents]);
+  }, [incidents, routeSegments, selectedResponderId]);
 
   return (
     <div className="relative h-full w-full">
@@ -163,7 +241,11 @@ function MapboxMap() {
 // ---------------------------------------------------------------
 
 function FallbackMap() {
-  const incidents = useDashboardStore(selectIncidents);
+  const incidents = useDashboardStore(useShallow(selectIncidents));
+  const routes = useDashboardStore(useShallow(selectRoutes));
+  const incidentsById = useDashboardStore((s) => s.incidentsById);
+  const respondersById = useDashboardStore((s) => s.respondersById);
+  const selectedResponderId = useDashboardStore((s) => s.selectedResponderId);
   const select = useDashboardStore((s) => s.selectIncident);
   const selectedId = useDashboardStore((s) => s.selectedIncidentId);
 
@@ -189,6 +271,29 @@ function FallbackMap() {
       }),
     [incidents],
   );
+
+  const routeSegments = useMemo(
+    () =>
+      makeRouteSegments(
+        routes,
+        incidentsById,
+        respondersById,
+        selectedResponderId,
+      ),
+    [routes, incidentsById, respondersById, selectedResponderId],
+  );
+
+  const projectPoint = (point: { lat: number; lng: number }) => {
+    const xPct =
+      ((point.lng - FALLBACK_BBOX.minLng) /
+        (FALLBACK_BBOX.maxLng - FALLBACK_BBOX.minLng)) *
+      100;
+    const yPct =
+      ((FALLBACK_BBOX.maxLat - point.lat) /
+        (FALLBACK_BBOX.maxLat - FALLBACK_BBOX.minLat)) *
+      100;
+    return { xPct, yPct };
+  };
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950">
@@ -250,6 +355,36 @@ function FallbackMap() {
           strokeWidth="0.35"
           strokeDasharray="1.5 1.5"
         />
+        {routeSegments.map((segment) => {
+          const start = projectPoint(segment.from);
+          const end = projectPoint(segment.to);
+          const stroke =
+            segment.route.route_source === 'fallback'
+              ? 'rgb(245,158,11)'
+              : segment.route.route_source === 'cached'
+                ? 'rgb(148,163,184)'
+                : 'rgb(56,189,248)';
+          return (
+            <motion.line
+              key={segment.id}
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{
+                pathLength: 1,
+                opacity: segment.isSelected ? 0.9 : 0.35,
+              }}
+              transition={{ duration: 0.35 }}
+              x1={start.xPct}
+              y1={start.yPct}
+              x2={end.xPct}
+              y2={end.yPct}
+              stroke={stroke}
+              strokeWidth={segment.isSelected ? 0.75 : 0.4}
+              strokeDasharray={
+                segment.route.route_source === 'fallback' ? '1.2 1.2' : undefined
+              }
+            />
+          );
+        })}
       </svg>
 
       {/* Cluster rings */}

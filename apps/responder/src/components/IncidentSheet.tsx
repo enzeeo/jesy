@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useMemo } from 'react';
 import { MapPin, RotateCcw, X } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 
 import type { ResourceType } from '@disaster/types';
 import { severityBand } from '@disaster/types';
@@ -58,11 +59,15 @@ export default function IncidentSheet({ adapter }: Props) {
   const respondersById = useDashboardStore((s) => s.respondersById);
   const clustersById = useDashboardStore((s) => s.clustersById);
 
-  const assignments = useDashboardStore((s) =>
-    selectedId ? selectAssignmentsForIncident(s, selectedId) : [],
+  const assignments = useDashboardStore(
+    useShallow((s) =>
+      selectedId ? selectAssignmentsForIncident(s, selectedId) : [],
+    ),
   );
-  const unmet = useDashboardStore((s) =>
-    selectedId ? selectUnmetForIncident(s, selectedId) : [],
+  const unmet = useDashboardStore(
+    useShallow((s) =>
+      selectedId ? selectUnmetForIncident(s, selectedId) : [],
+    ),
   );
 
   const clusterSize = useMemo(() => {

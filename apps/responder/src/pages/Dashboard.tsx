@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 
 import FiltersPanel from '../components/FiltersPanel';
 import IncidentQueue from '../components/IncidentQueue';
@@ -20,6 +20,7 @@ function hasAuth(): boolean {
 }
 
 export default function Dashboard() {
+  const location = useLocation();
   const adapter = useMemo(() => getDataAdapter(), []);
   const hydrate = useDashboardStore((s) => s.hydrate);
   const applyEvent = useDashboardStore((s) => s.applyEvent);
@@ -39,7 +40,7 @@ export default function Dashboard() {
     };
   }, [adapter, hydrate, applyEvent]);
 
-  if (!hasAuth()) {
+  if (location.pathname !== '/demo' && !hasAuth()) {
     return <Navigate to="/login" replace />;
   }
 

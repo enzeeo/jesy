@@ -7,6 +7,7 @@ import {
   RotateCcw,
   StepForward,
 } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { useDashboardStore, selectStats } from '../lib/store';
 import type { DataAdapter } from '../lib/data';
@@ -25,7 +26,7 @@ function fmtClock(sec: number): string {
 export default function StatsBar({ adapter }: Props) {
   const scenario = useDashboardStore((s) => s.scenario);
   const connection = useDashboardStore((s) => s.connectionLabel);
-  const stats = useDashboardStore(selectStats);
+  const stats = useDashboardStore(useShallow(selectStats));
 
   const isRunning = scenario.status === 'running';
   const isPaused = scenario.status === 'paused';

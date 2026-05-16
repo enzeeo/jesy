@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { severityBand } from '@disaster/types';
 
@@ -10,7 +11,7 @@ import {
 import { selectQueue, useDashboardStore } from '../lib/store';
 
 export default function IncidentQueue() {
-  const queue = useDashboardStore(selectQueue);
+  const queue = useDashboardStore(useShallow(selectQueue));
   const selectIncident = useDashboardStore((s) => s.selectIncident);
   const selectedIncidentId = useDashboardStore((s) => s.selectedIncidentId);
   const clustersById = useDashboardStore((s) => s.clustersById);
