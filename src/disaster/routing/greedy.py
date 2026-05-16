@@ -38,15 +38,27 @@ def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
 def greedy_assign(
     incidents: list[IncidentReport],
     responders: list[ResponderUnit],
+    *,
+    vehicle_capacity: int = 5,
 ) -> Assignment:
-    """Highest-priority incident first; pick nearest available responder; repeat."""
+    """
+    Highest-priority incident first; pick nearest non-full responder; chain
+    up to `vehicle_capacity` incidents per responder before marking them full.
+
+    Matches VRP's default capacity so greedy / VRP outputs are comparable.
+    At disaster scale (200 incidents, 4 responders, cap=5) you get 20 assigned
+    and 180 unassigned. That's still a lot of unassigned but is the realistic
+    operational truth (small dispatch team, large event); mutual-aid / phased
+    response would be the production answer.
+    """
     from disaster.routing.optimize import Assignment, RouteLeg
 
     t0 = time.monotonic()
     ordered = sorted(incidents, key=lambda i: -i.priority_score)
     routes: dict[UUID, list[RouteLeg]] = {r.id: [] for r in responders}
-    # Track current position per responder as they get assigned.
+    # Track current position per responder as they chain through incidents.
     current_loc = {r.id: (r.location.lat, r.location.lng) for r in responders}
+    capacity_remaining = {r.id: vehicle_capacity for r in responders}
     available = list(responders)
     unassigned: list[UUID] = []
 
@@ -68,8 +80,9 @@ def greedy_assign(
         )
         routes[best.id].append(leg)
         current_loc[best.id] = target
-        # One incident per responder for the demo; chain by removing here:
-        available.remove(best)
+        capacity_remaining[best.id] -= 1
+        if capacity_remaining[best.id] <= 0:
+            available.remove(best)
 
     return Assignment(
         routes=routes,

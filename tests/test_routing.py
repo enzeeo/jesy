@@ -59,25 +59,37 @@ def test_greedy_assigns_each_responder_to_closest_incident():
     assert assignment.unassigned == []
 
 
-def test_greedy_unassigns_excess_incidents():
+def test_greedy_chains_up_to_capacity_per_responder():
+    """Default vehicle_capacity=5 — one responder takes up to 5 incidents."""
+    r = _responder("ALS-1", 19.7, -155.0)
+    incidents = [_incident(19.7 + 0.001 * i, -155.0) for i in range(7)]
+    assignment = greedy_assign(incidents, [r])
+    total_assigned = sum(len(legs) for legs in assignment.routes.values())
+    assert total_assigned == 5
+    assert len(assignment.unassigned) == 2
+
+
+def test_greedy_capacity_one_falls_back_to_one_per_responder():
+    """vehicle_capacity=1 reproduces the original 'one per responder' behavior."""
     r = _responder("ALS-1", 19.7, -155.0)
     a = _incident(19.7, -155.0)
     b = _incident(19.71, -155.0)
-    assignment = greedy_assign([a, b], [r])
-    # One responder, one assignment, one unassigned
+    assignment = greedy_assign([a, b], [r], vehicle_capacity=1)
     total_assigned = sum(len(legs) for legs in assignment.routes.values())
     assert total_assigned == 1
     assert len(assignment.unassigned) == 1
 
 
 def test_greedy_higher_priority_assigned_first():
-    """If a low-priority incident is closer, the high-priority one still wins."""
+    """If a low-priority incident is closer, the high-priority one is taken FIRST."""
     r = _responder("ALS-1", 19.700, -155.000)
     far_high = _incident(19.800, -155.000, priority=0.95)   # far, urgent
     near_low = _incident(19.701, -155.000, priority=0.10)   # close, minor
     assignment = greedy_assign([far_high, near_low], [r])
+    # First leg is the high-priority incident, regardless of proximity.
     assert assignment.routes[r.id][0].incident_id == far_high.id
-    assert assignment.unassigned == [near_low.id]
+    # With default capacity=5, both fit; near_low becomes leg #2.
+    assert assignment.routes[r.id][1].incident_id == near_low.id
 
 
 def test_greedy_eta_proportional_to_distance():
