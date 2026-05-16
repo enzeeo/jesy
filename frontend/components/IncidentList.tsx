@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useRef, useState } from "react";
 import type { IncidentReport } from "@/lib/types";
 import { SEVERITY_VISUAL } from "@/lib/severity";
 
@@ -21,6 +22,21 @@ function timeShort(iso: string): string {
 export function IncidentList({ incidents, flashing, selectedId, onSelect }: Props) {
   const sorted = [...incidents].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
+  // aria-live: announce only when the newest incident's ID actually changes,
+  // and at most one announcement per second. Without this, the sim flood
+  // would spam screen readers 50+ times per minute.
+  const seenIdRef = useRef<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  useEffect(() => {
+    const newest = sorted[0];
+    if (!newest || newest.id === seenIdRef.current) return;
+    seenIdRef.current = newest.id;
+    const text = `New ${newest.severity} incident at ${newest.location.description}`;
+    setAnnouncement(text);
+    const t = setTimeout(() => setAnnouncement(""), 4000);
+    return () => clearTimeout(t);
+  }, [sorted]);
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-border-strong bg-bg-panel px-3 py-2">
@@ -37,11 +53,11 @@ export function IncidentList({ incidents, flashing, selectedId, onSelect }: Prop
               <div className="mono mt-2 text-xs text-fg-muted">{new Date().toISOString().slice(11, 19)} UTC</div>
             </div>
           </div>
-        ) : (
-          <div aria-live="polite" aria-atomic="false" className="sr-only">
-            {sorted[0] && `New ${sorted[0].severity} incident at ${sorted[0].location.description}`}
-          </div>
-        )}
+        ) : null}
+
+        <div aria-live="polite" aria-atomic="true" className="sr-only">
+          {announcement}
+        </div>
 
         {sorted.map((inc) => {
           const v = SEVERITY_VISUAL[inc.severity];
