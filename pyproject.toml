@@ -13,6 +13,7 @@ dependencies = [
     "tenacity>=9.0",
     "snowflake-connector-python>=3.12",
     "ortools>=9.11",
+    "python-dotenv>=1.0",
 ]
 
 [dependency-groups]

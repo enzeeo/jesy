@@ -148,11 +148,14 @@ async def test_voice_intake_missing_transcript_422():
 
 # ── Router unset → 503 ───────────────────────────────────────────────────────
 
-async def test_voice_intake_503_when_router_unset():
+async def test_voice_intake_503_when_router_unset(monkeypatch):
+    """Drop the env so create_app() doesn't auto-wire a real OpenAI client."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     state = AppState()
-    # Don't set llm_client
+    # Don't set llm_client; with no env key, create_app leaves it None.
     async def noop(_t, _r): pass
     app = create_app(snowflake_writer=SnowflakeWriter(noop, flush_interval_s=0.05), state=state)
+    assert state.llm_client is None
     await state.snowflake.start()
     try:
         transport = ASGITransport(app=app)
