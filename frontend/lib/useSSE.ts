@@ -4,6 +4,12 @@ import type { SSEEvent } from "./types";
 
 type Handler = (event: SSEEvent) => void;
 
+// SSE goes DIRECT to the backend, bypassing Next.js rewrite.
+// Next.js dev (14.x) buffers proxied SSE responses — EventSource never receives
+// events even though curl works. CORS allow_origins=["*"] on the backend covers
+// this. Override via NEXT_PUBLIC_BACKEND_URL if backend is not on localhost:8000.
+const SSE_URL = `${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000"}/events`;
+
 /**
  * Subscribes to /events (server-sent events). Maintains an internal
  * sequence_id Set so the severity flash hook can dedupe concurrent upgrades.
@@ -17,7 +23,7 @@ export function useSSE(handler: Handler, deps: React.DependencyList = []) {
   }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const es = new EventSource("/api/events");
+    const es = new EventSource(SSE_URL);
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
 
@@ -33,7 +39,7 @@ export function useSSE(handler: Handler, deps: React.DependencyList = []) {
           const seq = e.lastEventId ? Number(e.lastEventId) : undefined;
           handlerRef.current({ type: t, data, sequence_id: seq });
         } catch {
-          // ignore malformed
+          // ignore malformed events
         }
       };
       es.addEventListener(t, cb);
