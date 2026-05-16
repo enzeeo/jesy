@@ -11,6 +11,7 @@ import { InfraPanel } from "@/components/InfraPanel";
 import { SnowflakeTiles } from "@/components/SnowflakeTiles";
 import { CortexToasts } from "@/components/CortexToast";
 import { TopBar } from "@/components/TopBar";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 interface Toast { id: number; data: CortexAlertData }
 
@@ -88,32 +89,46 @@ export default function Dashboard() {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="relative flex-1">
-          <MapView
-            incidents={incidents}
-            responders={responders}
-            flashing={flashing}
-            onSelect={setSelectedId}
-          />
-          <CortexToasts toasts={toasts} onDismiss={dismissToast} />
-          {selected && <IncidentDetail incident={selected} onClose={() => setSelectedId(null)} />}
+          <ErrorBoundary label="Map">
+            <MapView
+              incidents={incidents}
+              responders={responders}
+              flashing={flashing}
+              onSelect={setSelectedId}
+            />
+          </ErrorBoundary>
+          <ErrorBoundary label="Cortex alerts">
+            <CortexToasts toasts={toasts} onDismiss={dismissToast} />
+          </ErrorBoundary>
+          {selected && (
+            <ErrorBoundary label="Incident detail">
+              <IncidentDetail incident={selected} onClose={() => setSelectedId(null)} />
+            </ErrorBoundary>
+          )}
         </div>
 
         <aside className="w-[360px] border-l border-border-strong bg-bg-base">
-          <IncidentList
-            incidents={incidents}
-            flashing={flashing}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
+          <ErrorBoundary label="Incident list">
+            <IncidentList
+              incidents={incidents}
+              flashing={flashing}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+            />
+          </ErrorBoundary>
         </aside>
       </div>
 
       <div className="h-[180px] border-t border-border-strong bg-bg-base flex">
         <div className="w-[280px]">
-          <InfraPanel callsHandled={callsHandled} incidentsCount={incidents.length} />
+          <ErrorBoundary label="Infra panel">
+            <InfraPanel callsHandled={callsHandled} incidentsCount={incidents.length} />
+          </ErrorBoundary>
         </div>
         <div className="flex-1">
-          <SnowflakeTiles refreshSignal={tileRefreshSignal} />
+          <ErrorBoundary label="Snowflake tiles">
+            <SnowflakeTiles refreshSignal={tileRefreshSignal} />
+          </ErrorBoundary>
         </div>
       </div>
     </div>

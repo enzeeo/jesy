@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { IncidentReport, ResponderUnit } from "@/lib/types";
@@ -20,6 +20,7 @@ const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 export function MapView({ incidents, responders, flashing, onSelect }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
+  const [initError, setInitError] = useState<string | null>(null);
 
   // ── init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -29,14 +30,27 @@ export function MapView({ incidents, responders, flashing, onSelect }: Props) {
       return;
     }
     mapboxgl.accessToken = TOKEN;
-    const map = new mapboxgl.Map({
-      container: containerRef.current,
-      style: "mapbox://styles/mapbox/dark-v11",
-      center: [HILO.lng, HILO.lat],
-      zoom: HILO.zoom,
-      attributionControl: false,
-    });
+    let map: mapboxgl.Map;
+    try {
+      map = new mapboxgl.Map({
+        container: containerRef.current,
+        style: "mapbox://styles/mapbox/dark-v11",
+        center: [HILO.lng, HILO.lat],
+        zoom: HILO.zoom,
+        attributionControl: false,
+      });
+    } catch (err) {
+      // Most common cause: WebGL unavailable (headless browser, hardware accel off,
+      // very old browser). Never crash the rest of the dashboard.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Map init failed:", msg);
+      setInitError(msg);
+      return;
+    }
     mapRef.current = map;
+    map.on("error", (e) => {
+      console.error("Mapbox error:", e?.error?.message ?? e);
+    });
 
     map.on("load", () => {
       // Hide noisy street/POI labels per Pass 7 issue 7.1
@@ -204,6 +218,20 @@ export function MapView({ incidents, responders, flashing, onSelect }: Props) {
         <div className="text-center">
           <div className="text-fg-secondary">Mapbox token missing</div>
           <div className="mono text-xs mt-2">Set NEXT_PUBLIC_MAPBOX_TOKEN in frontend/.env.local</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (initError) {
+    return (
+      <div className="flex h-full items-center justify-center bg-bg-panel text-fg-muted">
+        <div className="max-w-md text-center px-6">
+          <div className="text-fg-secondary">Map unavailable</div>
+          <div className="mono text-xs mt-2 text-status-warn break-words">{initError}</div>
+          <div className="mono text-xs mt-3 text-fg-muted">
+            Dashboard continues to function. Check WebGL support in your browser.
+          </div>
         </div>
       </div>
     );
