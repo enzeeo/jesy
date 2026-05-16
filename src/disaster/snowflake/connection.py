@@ -4,14 +4,24 @@ Snowflake connection helpers.
 The connector is sync; we wrap it in run_in_executor so the writer worker
 can await without blocking the event loop. Connection params come from env:
 
-  SNOWFLAKE_ACCOUNT       e.g. abcd-xy12345
+  SNOWFLAKE_ACCOUNT             e.g. abcd-xy12345
   SNOWFLAKE_USER
-  SNOWFLAKE_PASSWORD
-  SNOWFLAKE_WAREHOUSE     default DISASTER_WH
-  SNOWFLAKE_DATABASE      default DISASTER_DB
-  SNOWFLAKE_SCHEMA        default OPERATIONAL
+  SNOWFLAKE_WAREHOUSE           default DISASTER_WH
+  SNOWFLAKE_DATABASE            default DISASTER_DB
+  SNOWFLAKE_SCHEMA              default OPERATIONAL
 
-When any required env var is missing, callers get a no-op flush instead.
+Pick ONE auth method:
+  SNOWFLAKE_PRIVATE_KEY_PATH    path to PKCS#8 .p8 file (recommended for teams)
+  SNOWFLAKE_PRIVATE_KEY_PASSPHRASE  optional, if the key is encrypted
+  OR
+  SNOWFLAKE_PASSWORD            legacy password auth
+
+Key-pair beats passwords for teams: each developer has their own private key
+on their own machine, never shared, never committed. To set up your key:
+
+  uv run python scripts/snowflake_keypair_setup.py
+
+When the required env vars are missing, callers get a no-op flush instead.
 """
 from __future__ import annotations
 
@@ -77,10 +87,46 @@ def _row_to_columns(table: str, row: dict[str, Any]) -> list[Any]:
 
 
 def env_configured() -> bool:
-    """True iff all required Snowflake env vars are set."""
-    return all(os.environ.get(k) for k in (
-        "SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
-    ))
+    """True iff ACCOUNT + USER are set AND at least one auth method is configured."""
+    if not (os.environ.get("SNOWFLAKE_ACCOUNT") and os.environ.get("SNOWFLAKE_USER")):
+        return False
+    return bool(os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH") or os.environ.get("SNOWFLAKE_PASSWORD"))
+
+
+def _load_private_key_bytes() -> bytes:
+    """Load a PKCS#8 private key from disk, return DER bytes for snowflake-connector."""
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
+
+    path = os.environ["SNOWFLAKE_PRIVATE_KEY_PATH"]
+    passphrase = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", "").encode() or None
+    with open(path, "rb") as f:
+        p_key = serialization.load_pem_private_key(
+            f.read(), password=passphrase, backend=default_backend(),
+        )
+    return p_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+
+def _connect_params() -> dict[str, Any]:
+    """Assemble snowflake.connector.connect() kwargs from env. Picks key-pair over password."""
+    params: dict[str, Any] = {
+        "account": os.environ["SNOWFLAKE_ACCOUNT"],
+        "user": os.environ["SNOWFLAKE_USER"],
+        "warehouse": os.environ.get("SNOWFLAKE_WAREHOUSE", "DISASTER_WH"),
+        "database": os.environ.get("SNOWFLAKE_DATABASE", "DISASTER_DB"),
+        "schema": os.environ.get("SNOWFLAKE_SCHEMA", "OPERATIONAL"),
+    }
+    if os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH"):
+        params["private_key"] = _load_private_key_bytes()
+        log.info("snowflake: using key-pair auth")
+    else:
+        params["password"] = os.environ["SNOWFLAKE_PASSWORD"]
+        log.warning("snowflake: using password auth (consider key-pair instead)")
+    return params
 
 
 def build_snowflake_flush() -> Callable[[str, list[dict[str, Any]]], Awaitable[None]]:
@@ -93,15 +139,7 @@ def build_snowflake_flush() -> Callable[[str, list[dict[str, Any]]], Awaitable[N
 
     import snowflake.connector
 
-    params = {
-        "account": os.environ["SNOWFLAKE_ACCOUNT"],
-        "user": os.environ["SNOWFLAKE_USER"],
-        "password": os.environ["SNOWFLAKE_PASSWORD"],
-        "warehouse": os.environ.get("SNOWFLAKE_WAREHOUSE", "DISASTER_WH"),
-        "database": os.environ.get("SNOWFLAKE_DATABASE", "DISASTER_DB"),
-        "schema": os.environ.get("SNOWFLAKE_SCHEMA", "OPERATIONAL"),
-    }
-
+    params = _connect_params()
     conn = snowflake.connector.connect(**params)
     log.info("snowflake: connected account=%s db=%s schema=%s",
              params["account"], params["database"], params["schema"])
@@ -138,14 +176,7 @@ def get_query_runner() -> Callable[[str, tuple], Awaitable[list[dict[str, Any]]]
 
     import snowflake.connector
 
-    conn = snowflake.connector.connect(
-        account=os.environ["SNOWFLAKE_ACCOUNT"],
-        user=os.environ["SNOWFLAKE_USER"],
-        password=os.environ["SNOWFLAKE_PASSWORD"],
-        warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "DISASTER_WH"),
-        database=os.environ.get("SNOWFLAKE_DATABASE", "DISASTER_DB"),
-        schema=os.environ.get("SNOWFLAKE_SCHEMA", "OPERATIONAL"),
-    )
+    conn = snowflake.connector.connect(**_connect_params())
 
     def _sync_query(sql: str, params: tuple) -> list[dict[str, Any]]:
         cur = conn.cursor(snowflake.connector.DictCursor)

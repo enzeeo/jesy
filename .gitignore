@@ -13,3 +13,6 @@ node_modules/
 out/
 *.sqlite3
 .DS_Store
+.gstack/
+*.p8
+*.pem

@@ -62,12 +62,32 @@ The demo works end-to-end with **only `OPENAI_API_KEY` + `NEXT_PUBLIC_MAPBOX_TOK
 
 ## Snowflake setup (optional but real)
 
-Once your `SNOWFLAKE_*` env vars are in `.env`:
+**Key-pair auth (recommended for teams).** Each developer generates their own
+private key locally; the account owner registers the public key once per user.
+No shared passwords, no secrets in `.env` beyond a file path.
+
+```bash
+# Each developer runs once:
+uv run python scripts/snowflake_keypair_setup.py --user YOUR_SNOWFLAKE_USER
+```
+
+The script:
+1. Generates an RSA 2048 keypair in `~/.snowflake/` (chmod 600, gitignored)
+2. Prints the `ALTER USER ... SET RSA_PUBLIC_KEY=...` SQL to send to whoever
+   owns the Snowflake account
+3. Prints the env vars to copy into your `.env`
+
+Then verify:
 
 ```bash
 make snowflake-init          # creates 4 tables + seed rows + runs all queries
 make snowflake-smoke         # idempotent re-run; verifies schema + every tile + cortex SQL
 ```
+
+`scripts/snowflake_smoke.py` prints which auth method it's using
+(`key-pair` or `password`). Password auth (`SNOWFLAKE_PASSWORD`) still works
+as a fallback for solo dev / hackathon prototyping, but key-pair is preferred
+for any shared account.
 
 `scripts/snowflake_init.sql` is the source of truth for the DDL. The 4 tables:
 - `incidents` — every IncidentReport write (append-only fact table)

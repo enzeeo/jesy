@@ -28,7 +28,7 @@ from pathlib import Path
 # Allow running from project root or scripts/
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from disaster.snowflake.connection import env_configured
+from disaster.snowflake.connection import _connect_params, env_configured
 from disaster.snowflake.tiles import TILE_QUERIES
 
 GREEN = "\033[32m"
@@ -59,10 +59,14 @@ def main() -> int:
     print("=" * 60)
 
     if not env_configured():
-        fail("SNOWFLAKE_ACCOUNT / SNOWFLAKE_USER / SNOWFLAKE_PASSWORD not set")
+        fail("SNOWFLAKE_ACCOUNT + SNOWFLAKE_USER + (PRIVATE_KEY_PATH or PASSWORD) not set")
         print("\nSet them in .env and re-run. See .env.example.")
+        print("For key-pair auth: uv run python scripts/snowflake_keypair_setup.py")
         return 1
     ok("env vars present")
+
+    auth_method = "key-pair" if os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH") else "password"
+    ok(f"auth method: {auth_method}")
 
     try:
         import snowflake.connector
@@ -73,14 +77,7 @@ def main() -> int:
 
     # Connect
     try:
-        conn = snowflake.connector.connect(
-            account=os.environ["SNOWFLAKE_ACCOUNT"],
-            user=os.environ["SNOWFLAKE_USER"],
-            password=os.environ["SNOWFLAKE_PASSWORD"],
-            warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "DISASTER_WH"),
-            database=os.environ.get("SNOWFLAKE_DATABASE", "DISASTER_DB"),
-            schema=os.environ.get("SNOWFLAKE_SCHEMA", "OPERATIONAL"),
-        )
+        conn = snowflake.connector.connect(**_connect_params())
     except Exception as e:  # noqa: BLE001
         fail(f"connect failed: {e}")
         return 1

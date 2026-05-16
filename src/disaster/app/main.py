@@ -4,6 +4,9 @@ FastAPI application factory.
 Lifespan:
   startup → snowflake_writer.start()
   shutdown → snowflake_writer.stop() (drains queue with timeout)
+
+.env loaded by `_load_env()` before create_app() reads any env vars.
+Shell env vars win — override=False.
 """
 from __future__ import annotations
 
@@ -11,8 +14,10 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from disaster.app.deps import AppState
@@ -34,6 +39,10 @@ from disaster.snowflake import (
     env_configured,
     get_query_runner,
 )
+
+# Load .env from project root if present. Safe to call multiple times; safe in tests.
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(_PROJECT_ROOT / ".env", override=False)
 
 log = logging.getLogger(__name__)
 
