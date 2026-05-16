@@ -1,0 +1,19 @@
+{
+  "name": "disaster-relief",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter=\"./apps/*\" --filter=\"./services/*\" dev",
+    "dev:victim": "pnpm --filter @disaster/victim dev",
+    "dev:responder": "pnpm --filter @disaster/responder dev",
+    "dev:api": "pnpm --filter @disaster/api dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @disaster/api test"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

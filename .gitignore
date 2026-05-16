@@ -1,0 +1,12 @@
+node_modules/
+.pnpm-store/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+.snowflake/
+.vite/
+.turbo/
+coverage/
+*.tsbuildinfo

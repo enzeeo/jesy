@@ -29,6 +29,9 @@ During large-scale disasters, individual victims can't reach overwhelmed call ce
 
 ```bash
 # 1. Install
+# If pnpm asks whether to reinstall modules from scratch, answer Y
+# or force a non-interactive yes (example):
+#   yes | pnpm install
 pnpm install
 
 # 2. Copy env template and fill in
@@ -68,6 +71,23 @@ pnpm dev
 
 ## Status
 
-Phase 0 — Planning complete. Template scaffold next.
+Phase 0 — Monorepo scaffold + Fixture UI Preview for victim + responder is in the tree.
 
 See `docs/PLAN.md` for the full status, locked decisions, and risk register.
+
+### Install issues
+
+This repo expects **pnpm 9** (`corepack prepare pnpm@9.12.0 --activate`). If `pnpm install` hangs or fails:
+
+1. Use a working network/VPN and retry.
+2. If prompted *“The modules directories will be removed and reinstalled from scratch”*, confirm **Y** or run `yes | pnpm install` in a terminal.
+3. After a successful install, run `pnpm typecheck` and `pnpm test` to verify all packages.
+
+The applications still need `node_modules` to run `pnpm dev` or to typecheck React/Vite imports—there is no way to execute Vite without installing dependencies.
+
+If install fails with missing files under `node_modules/.pnpm` (for example `ENOENT .../nanoid/package.json`), wipe and reinstall:
+
+```bash
+rm -rf node_modules apps/*/node_modules services/*/node_modules packages/*/node_modules
+pnpm install
+```
