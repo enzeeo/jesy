@@ -1,3 +1,4 @@
+<!-- /autoplan restore point: /Users/enzeeo/.gstack/projects/jezy/enzeeo-autoplan-restore-20260516-151602.md -->
 # PLAN — Disaster Relief Triage (Texas Flood Demo)
 
 **Status:** APPROVED · 18h hackathon · 4 people
@@ -23,6 +24,8 @@ A two-sided web platform.
 
 ## Demo Truth Boundary
 
+- **Fixture UI Preview comes first**: the first build can use mock data for every UI surface to validate layout, copy, and state choreography before API/Snowflake exists. It should use 12 curated incidents in a scripted 60-second scenario with Start, Inject, and Reset controls so the preview matches the final demo rhythm while staying easy to review.
+- **Fixture UI Preview is not the judged demo**: local fixture data must not be presented as live Snowflake processing.
 - **Synthetic input is allowed**: v1 victim "calls" are pre-authored scenario incidents, not real phone calls.
 - **Snowflake processing must be live**: scenario incidents still go through the real API/Snowflake ingest path, Cortex severity, dedup/clustering, roster rollup, and dispatch assignment during the demo.
 - **Scenario timing belongs to the API**: Snowflake owns scenario processing/state after ingest; the API schedules incident inserts so the demo beats are reliable.
@@ -58,11 +61,12 @@ A two-sided web platform.
 | D12 | Cluster + dedup                                                           | Both, auto via Dynamic Table joining `ST_CLUSTER_KMEANS` + Cortex embeddings/vector similarity; true Cortex Search service only if hour-1 spike succeeds |
 | D13 | Routing                                                                   | V1 greedy multi-resource dispatch with visible unmet needs; schema leaves room for later optimizer; Mapbox polyline + recompute on sev≥80 or unit-free |
 | D14 | Demo data                                                                 | 50 hand-authored Texas flood incidents in `scenarios/texas-flood.json`                                 |
-| D15 | Responder UI                                                              | Map-dominant + collapsible side panels + bottom route drawer, dark mode                                |
-| D16 | Victim UI                                                                 | Minimal: Call/Text buttons + dynamic prompt of what to say; pre-reg one-time; status screen after      |
+| D15 | Responder UI                                                              | Map-dominant + collapsible side panels + bottom route drawer; dense dark command-center tone           |
+| D16 | Victim UI                                                                 | Polished calm high-contrast mobile flow: Call/Text buttons + dynamic prompt; lightweight skippable pre-reg/profile; inventory chips; status screen after |
 | D17 | Repo                                                                      | pnpm monorepo, 4 tracks; template scaffolded first by one person, then forked                          |
 | D18 | Hosting                                                                   | Local dev only for v1 demo; Cloudflare Tunnel optional if ElevenLabs added                             |
 | D19 | Multi-responder dispatch (promoted)                                       | Roster panel + Cortex `required_resources` output + Snowflake greedy assignment proc                   |
+| D20 | Fixture UI Preview                                                       | First implementation may use local mock data for all UI states; equal polish with shared tokens and split tone; live Snowflake remains final demo truth |
 
 ---
 

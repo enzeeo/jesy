@@ -6,18 +6,53 @@
 
 ---
 
+## Phase -1 — Fixture UI Preview (one person, ~2-3h)
+
+Owner: TBD (person with strongest UI taste).
+
+Goal: validate expected UI and demo choreography before real API/Snowflake exists. This phase uses the full pnpm monorepo skeleton, but only `apps/victim`, `apps/responder`, and `packages/types` need real implementation depth; `services/api` and `snowflake/` can remain stubs. This phase can use local mock data for everything, gives victim and responder previews equal polish, and must keep fixture/live boundaries visible in code and docs.
+
+- [ ] Create 12 curated fixture incidents with full Synthetic Profiles covering critical, medium, low, duplicate cluster, degraded triage, partial assignment, unmet resource need, route fallback, and victim status states.
+- [ ] Put shared preview data in `packages/fixtures`; keep `scenarios/texas-flood.json` for final 50-row API/Snowflake scenario later.
+- [ ] Add local fixture controls: Start Scenario, Inject Critical Incident, Reset Scenario, 4x Speed, and Step Through.
+- [ ] Script fixture events over 60 seconds by default, with 4x and step-through modes, so 12 curated incidents, queue rows, roster changes, clusters, and route updates appear in demo order.
+- [ ] Route UI data through typed adapters: `fixture` implementation now, `api` implementation later, selected by `VITE_DATA_MODE=fixture|api` with `fixture` as default.
+- [ ] Define shared Tailwind tokens for severity, resource types, typography, spacing, and focus states.
+- [ ] Build polished responder dashboard from fixtures: top stats, map pins/heatmap placeholder, right incident queue, incident sheet, roster panel, route drawer.
+- [ ] Optimize responder preview for laptop/desktop fullscreen; acceptable degradation elsewhere is enough.
+- [ ] Responder preview must visibly cover degraded triage chip, partial assignment, unmet need, route fallback, reconnect/fixture badge, and duplicate cluster merge.
+- [ ] Make fixture map Mapbox-capable when `VITE_MAPBOX_TOKEN` exists, with a CSS/SVG Houston fallback when no token is present.
+- [ ] Build polished victim PWA flow from fixtures: home, lightweight skippable profile, inventory chips, text incident form, manual location screen, status screen, and emergency copy tone.
+- [ ] Optimize victim preview for mobile portrait; acceptable desktop preview is enough.
+- [ ] Victim status screen covers Received, Being triaged, Help assigned with ETA, Low-confidence location, and Unmet resource states without exposing responder-only internals.
+- [ ] Add preview shortcuts: `/demo` in responder opens dashboard with fixture controls; `/demo` in victim opens a populated fast path through the fixture flow.
+- [ ] Apply split tone: responder is dense dark command center; victim is calm high-contrast mobile aid flow.
+- [ ] Add a visible fixture/live indicator in responder UI and victim status screen.
+- [ ] Use the same domain shapes planned for `@disaster/types` so fixture work becomes contract scaffolding, not throwaway model drift.
+- [ ] Capture screenshots or a short screen recording for UI review before starting real API/Snowflake integration.
+
+Exit criteria:
+- Mock dashboard communicates the 4-minute judge story without backend.
+- Mock victim flow feels equally demo-ready, including skippable profile context and inventory chips, not a placeholder.
+- Start/Inject/Reset/4x/Step controls work without API/Snowflake.
+- Screenshots are captured for both `/demo` flows.
+- Stop fixture polish after one good pass; move to real API/Snowflake pipeline work.
+- Any unclear UI state is written back to `docs/TODOS.md` before scaffold work begins.
+
+---
+
 ## Phase 0 — Template Scaffold (one person, ~1.5h)
 
 Owner: TBD (person with most TS/monorepo experience).
 
 See `docs/TEMPLATE.md` for exact spec. Output:
 - Working `pnpm install && pnpm dev` runs all three apps locally.
-- `packages/types` published internally with full type set from `CONTEXT.md §Domain Model`.
+- `packages/types` published internally with full type set from `CONTEXT.md §Domain Model`, including dashboard snapshot, route preview, victim status, and fixture timeline contracts.
 - `.env.example` complete.
 - All 4 tracks can `git pull` and start without conflicts.
 
 - [ ] pnpm workspace + root tsconfig + root scripts
-- [ ] `packages/types` exports full domain model
+- [ ] `packages/types` exports full domain model plus `DashboardState`, `RoutePreview`, `VictimStatusView`, and `FixtureTimelineEvent`
 - [ ] `apps/victim` Vite + React + Tailwind + PWA manifest stub runs
 - [ ] `apps/responder` Vite + React + Tailwind + Mapbox import stub runs
 - [ ] `services/api` Hono + Snowflake SDK + dotenv stub runs (health check route only)
@@ -34,7 +69,7 @@ See `docs/TEMPLATE.md` for exact spec. Output:
 These are the cross-track gates that prevent UI/API/Snowflake drift. If these are late, everyone shifts to unblock them before adding polish.
 
 - [ ] H1.5: Template scaffold merged and all tracks can run `pnpm install && pnpm dev`
-- [ ] H2: `@disaster/types` exports final v1 shapes for `IncidentRaw`, `IncidentEnriched`, `SeverityResult`, `Assignment`, `UnmetResourceNeed`, and `SSEEvent`
+- [ ] H2: `@disaster/types` exports final v1 shapes for `IncidentRaw`, `IncidentEnriched`, `SeverityResult`, `Assignment`, `UnmetResourceNeed`, `DashboardState`, `RoutePreview`, `VictimStatusView`, `FixtureTimelineEvent`, and `SSEEvent`
 - [ ] H2: Snowflake `01_schema.sql` applies and contains `INCIDENTS_RAW`, physical `INCIDENTS_ENRICHED`, `RESPONDERS`, `ASSIGNMENTS`, `UNMET_RESOURCE_NEEDS`, `ROUTES`, and `INCIDENT_STREAM`
 - [ ] H2.5: API `/health` confirms process boot; Snowflake connection can run `SELECT 1`
 - [ ] H3: `POST /v1/incidents` inserts one GPS-backed test incident into `INCIDENTS_RAW`

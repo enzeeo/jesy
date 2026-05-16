@@ -2,21 +2,22 @@
 
 > **Audience**: the one engineer (or agent) who will scaffold this repo in a single pass before the 4-track build begins.
 >
-> **Goal**: by end of this task, `pnpm install && pnpm dev` brings up all three apps, all three apps import from `@disaster/types`, and `.env.example` is complete. Time budget: **~1.5 hours**.
+> **Goal**: by end of this task, `pnpm install && pnpm dev` brings up victim, responder, and API locally; victim/responder can show the Fixture UI Preview from local data; both UI apps import from `@disaster/types`; API/Snowflake exist as stubs; and `.env.example` is complete. Time budget: **~2-3 hours** if doing the fixture preview in the scaffold pass.
 
 ---
 
 ## Sequence
 
 1. **Init root** (5 min)
-2. **Create `packages/types`** (10 min) — write all domain types from `CONTEXT.md §Domain Model`
-3. **Scaffold `services/api`** (15 min)
-4. **Scaffold `apps/responder`** (20 min) — slightly more setup (Mapbox + Tailwind)
-5. **Scaffold `apps/victim`** (20 min) — Tailwind + PWA plugin
-6. **Stub Snowflake SQL files** (10 min) — empty but applied-in-order skeleton
-7. **Stub scenarios JSON** (5 min) — 3 placeholder incidents
-8. **Verify all three dev servers start** (5 min)
-9. **Commit + tag `template-ready`** (5 min)
+2. **Create `packages/types`** (10 min) — write all domain and UI contract types from `CONTEXT.md §Domain Model`
+3. **Create `packages/fixtures`** (20 min) — shared 12-incident Fixture UI Preview data and scripted timeline
+4. **Scaffold `services/api`** (15 min) — health check only for Fixture UI Preview
+5. **Scaffold `apps/responder`** (45-60 min) — fixture dashboard, adapter boundary, Mapbox-capable fallback map
+6. **Scaffold `apps/victim`** (45-60 min) — fixture mobile flow, adapter boundary, profile/inventory/status screens
+7. **Stub Snowflake SQL files** (10 min) — empty but applied-in-order skeleton
+8. **Stub scenarios JSON** (5 min) — placeholder final 50-row scenario source, expanded later
+9. **Verify all three dev servers start** (5 min)
+10. **Commit + tag `template-ready`** (5 min)
 
 ---
 
@@ -144,11 +145,50 @@ pnpm init
 }
 ```
 
-`packages/types/src/index.ts` — **copy verbatim from `docs/CONTEXT.md §Domain Model`**. This is the contract.
+`packages/types/src/index.ts` — **copy verbatim from `docs/CONTEXT.md §Domain Model`**. This is the contract, including `DashboardState`, `RoutePreview`, `VictimStatusView`, and `FixtureTimelineEvent`.
 
 ---
 
-## Step 3 — `services/api`
+## Step 3 — `packages/fixtures`
+
+```bash
+mkdir -p packages/fixtures/src
+cd packages/fixtures
+pnpm init
+```
+
+`packages/fixtures/package.json`:
+
+```json
+{
+  "name": "@disaster/fixtures",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/preview.ts",
+  "types": "./src/preview.ts",
+  "exports": {
+    ".": "./src/preview.ts"
+  },
+  "dependencies": {
+    "@disaster/types": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
+```
+
+`packages/fixtures/src/preview.ts` exports the 12 curated Fixture UI Preview incidents, roster, assignments, clusters, routes, victim status states, and 60-second event timeline. Keep this typed against `@disaster/types`.
+
+Both UI apps select data adapters with `VITE_DATA_MODE=fixture|api`; default to `fixture`.
+
+---
+
+## Step 4 — `services/api`
 
 ```bash
 mkdir -p services/api/src/{routes,lib}
@@ -244,7 +284,7 @@ export {};
 
 ---
 
-## Step 4 — `apps/responder`
+## Step 5 — `apps/responder`
 
 ```bash
 cd ../../apps
@@ -268,6 +308,7 @@ Then patch its `package.json` to:
   },
   "dependencies": {
     "@disaster/types": "workspace:*",
+    "@disaster/fixtures": "workspace:*",
     "@deck.gl/core": "^9.0.0",
     "@deck.gl/layers": "^9.0.0",
     "@deck.gl/mapbox": "^9.0.0",
@@ -335,6 +376,20 @@ export default function App() {
 }
 ```
 
+For Fixture UI Preview, do not stop at this placeholder. Replace it with the planned responder `/demo` route and fixture adapter:
+- `src/lib/data/fixtureAdapter.ts`
+- `src/lib/data/types.ts`
+- `src/lib/fixtures/texasFloodPreview.ts`
+- `src/pages/Dashboard.tsx`
+- `src/components/MapView.tsx`
+- `src/components/IncidentQueue.tsx`
+- `src/components/IncidentSheet.tsx`
+- `src/components/ResourceRoster.tsx`
+- `src/components/RouteDrawer.tsx`
+- `src/components/StatsBar.tsx`
+
+The preview dashboard should show Start Scenario, Inject Critical Incident, Reset, 4x Speed, Step Through, a visible fixture/live badge, and the Mapbox-or-CSS/SVG map fallback.
+
 `apps/responder/src/index.css`:
 
 ```css
@@ -348,7 +403,7 @@ html, body, #root {
 
 ---
 
-## Step 5 — `apps/victim`
+## Step 6 — `apps/victim`
 
 ```bash
 cd ..
@@ -374,6 +429,7 @@ Patch `apps/victim/package.json`:
   },
   "dependencies": {
     "@disaster/types": "workspace:*",
+    "@disaster/fixtures": "workspace:*",
     "idb-keyval": "^6.2.0",
     "lucide-react": "^0.460.0",
     "react": "^19.0.0",
@@ -445,6 +501,17 @@ export default function App() {
 }
 ```
 
+For Fixture UI Preview, do not stop at this placeholder. Replace it with the planned victim routes and fixture adapter:
+- `src/lib/data/fixtureAdapter.ts`
+- `src/lib/data/types.ts`
+- `src/pages/Home.tsx`
+- `src/pages/Profile.tsx`
+- `src/pages/Incident.tsx`
+- `src/pages/ManualLocation.tsx`
+- `src/pages/Status.tsx`
+
+The preview victim app should include `/demo`, skippable lightweight profile, inventory chips, text incident form, manual-location fallback, status screen, and a visible fixture/live badge.
+
 Same `index.css` as responder (Tailwind import).
 
 Add placeholder icons (replace later with real icons):
@@ -456,7 +523,7 @@ touch public/icon-192.png public/icon-512.png
 
 ---
 
-## Step 6 — Snowflake SQL Skeleton
+## Step 7 — Snowflake SQL Skeleton
 
 ```bash
 mkdir -p snowflake
@@ -611,9 +678,9 @@ Other 5 files start empty with a comment header (so the placeholder shows intent
 
 ---
 
-## Step 7 — Scenario stub
+## Step 8 — Scenario stub
 
-`scenarios/texas-flood.json`:
+`scenarios/texas-flood.json` starts as the 12-incident Fixture UI Preview set and later expands to 50 for the judged demo. It should already cover: critical, medium, low, duplicate cluster, degraded triage, partial assignment, unmet resource need, route fallback, and victim status.
 
 ```json
 {
@@ -656,11 +723,11 @@ Other 5 files start empty with a comment header (so the placeholder shows intent
 }
 ```
 
-(Track D will expand to 50 with varied severities and locations.)
+(Track D will expand from 12 to 50 with varied severities and locations.)
 
 ---
 
-## Step 8 — Verify
+## Step 9 — Verify
 
 ```bash
 cd /Users/enzeeo/bluescreen/jezy
@@ -671,8 +738,8 @@ pnpm dev
 Expected output:
 
 - `api listening on http://localhost:8787` → `curl localhost:8787/health` returns `{ ok: true, ... }`
-- Victim PWA on `http://localhost:5173` → "I NEED HELP" red button
-- Responder dash on `http://localhost:5174` → "Disaster Relief — Responder" with dark theme
+- Victim PWA on `http://localhost:5173/demo` → polished fixture victim flow
+- Responder dash on `http://localhost:5174/demo` → polished fixture command-center dashboard
 
 If any of those fail, fix before tagging.
 
@@ -684,7 +751,7 @@ Should pass with zero errors.
 
 ---
 
-## Step 9 — Commit + Tag
+## Step 10 — Commit + Tag
 
 ```bash
 git add .

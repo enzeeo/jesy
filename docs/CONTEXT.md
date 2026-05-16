@@ -14,9 +14,19 @@ _Avoid_: Landmark, manual location text
 A required responder type for an incident that could not be assigned because no matching responder is currently available.
 _Avoid_: Missing assignment, failed dispatch
 
+**Fixture UI Preview**:
+Mock-data-only build phase used to validate expected victim and responder UI before API/Snowflake implementation exists. It may use local fixtures for incidents, clusters, roster, assignments, routes, and status states, but it does not replace the live Snowflake demo path.
+_Avoid_: Mock v1, fake Snowflake demo
+
+**Synthetic Profile**:
+Full fixture-only victim profile with fake name, fake phone, fictional address or approximate place, age, household context, conditions, and devices. It should feel realistic in the UI while remaining clearly synthetic and safe for demo/Q&A.
+_Avoid_: Real PII, copied real addresses, real phone numbers
+
 ## Flagged ambiguities
 
 - "Landmark" sounded like famous landmarks only; resolved term is **Place description**, which includes ordinary nearby places like restaurants, gas stations, hospitals, schools, and cross-streets.
+- "Mock data for everything" means **Fixture UI Preview** only. The final judged demo still preserves the live Snowflake processing truth boundary.
+- Fixture profiles can be full and realistic, but they must be **Synthetic Profiles**, not real or real-looking PII.
 
 ---
 
@@ -31,6 +41,7 @@ Three apps + one warehouse:
 | `services/api`    | Hono on Node + TS, Snowflake Node SDK   | Sole gateway between clients and Snowflake; SSE pusher    |
 | `snowflake/`      | SQL + Snowpark Python                   | All data + all AI + all geospatial + all routing logic    |
 | `packages/types`  | TS only                                 | Shared domain types: `Incident`, `Profile`, `Severity`, `Responder`, `Assignment`, `Cluster` |
+| `packages/fixtures` | TS only                               | Shared 12-incident Fixture UI Preview data and scripted timeline |
 | `scenarios/`      | JSON                                    | Synthetic demo data                                       |
 
 **No client talks to Snowflake directly.** Everything funnels through `services/api`. This keeps credentials safe and lets us swap warehouse later if needed (we won't).
@@ -272,13 +283,64 @@ export interface ResourceRoster {
   busy: number;
 }
 
+export interface RoutePreview {
+  responder_id: string;
+  assignment_ids: string[];
+  stops: Array<{
+    incident_id: string;
+    eta_sec: number;
+    order: number;
+  }>;
+  polyline?: string;
+  total_eta_sec: number;
+  route_source: 'mapbox' | 'cached' | 'fallback';
+}
+
+export interface DashboardState {
+  mode: 'fixture' | 'live';
+  scenario?: {
+    name: string;
+    label: string;
+    elapsed_sec: number;
+    status: 'idle' | 'running' | 'paused' | 'complete';
+  };
+  incidents: IncidentEnriched[];
+  clusters: ClusterView[];
+  assignments: Assignment[];
+  unmet_resource_needs: UnmetResourceNeed[];
+  routes: RoutePreview[];
+  roster: ResourceRoster[];
+}
+
+export interface VictimStatusView {
+  incident_id: string;
+  state: 'received' | 'triaging' | 'assigned' | 'low_confidence_location' | 'unmet_resource';
+  message: string;
+  eta_sec?: number;
+  assigned_resource_types?: ResourceType[];
+  location_confidence?: number;
+}
+
+export interface FixtureTimelineEvent {
+  at_sec: number;
+  type:
+    | 'incident_new'
+    | 'incident_update'
+    | 'cluster_update'
+    | 'assignment_new'
+    | 'route_update'
+    | 'resource_update'
+    | 'victim_status_update';
+  payload: unknown;
+}
+
 // SSE event envelope
 export type SSEEvent =
   | { type: 'incident_new'; data: IncidentEnriched }
   | { type: 'incident_update'; data: IncidentEnriched }
   | { type: 'cluster_update'; data: ClusterView }
   | { type: 'assignment_new'; data: Assignment }
-  | { type: 'route_update'; data: { responder_id: string; polyline: string } }
+  | { type: 'route_update'; data: RoutePreview }
   | { type: 'resource_update'; data: ResourceRoster[] };
 ```
 
@@ -401,8 +463,11 @@ disaster-relief/
 │       │   └── lib/scenarios.ts    # scenario loader + scheduler
 │       └── package.json
 ├── packages/
-│   └── types/
-│       ├── src/index.ts            # the contract
+│   ├── types/
+│   │   ├── src/index.ts            # the contract
+│   │   └── package.json
+│   └── fixtures/
+│       ├── src/preview.ts          # 12-incident Fixture UI Preview data
 │       └── package.json
 ├── snowflake/
 │   ├── 01_schema.sql               # tables, streams
@@ -435,9 +500,14 @@ disaster-relief/
 
 - **TypeScript everywhere.** No JS files. Strict mode on.
 - **No domain types defined outside `packages/types`.** If you need a new type, add it there.
+- **Shared preview data lives in `packages/fixtures`.** Do not duplicate fixture incidents separately in victim and responder apps.
 - **API is the only Snowflake client.** Apps never connect to Snowflake.
 - **All SQL files in `snowflake/` are runnable in order.** Numbered prefix = apply order.
 - **Tailwind for styling.** No CSS modules, no styled-components.
+- **Shared UI tokens, split tone.** Use one disaster design system for colors, severity, typography, spacing, and focus states. Responder UI should feel like a dense dark command center; victim UI should feel calm, high-contrast, and panic-proof.
+- **Viewport priority.** Victim UI optimizes for mobile portrait; responder UI optimizes for laptop/desktop fullscreen. Both should degrade acceptably, but full responsive coverage is not v1.
+- **Fixture/live boundary through adapters.** UI components read from typed data adapters, not inline fixture imports. Start with a `fixture` adapter and swap to an `api` adapter with `VITE_DATA_MODE=fixture|api`; default to `fixture` until live endpoints exist.
+- **Victim status stays calm.** Show Received, Being triaged, Help assigned with ETA, Low-confidence location, and Unmet resource states. Do not expose responder-only internals like raw Snowflake errors, route internals, or degraded Cortex parsing details to victims.
 - **Env vars** loaded from `.env` files via Vite's `import.meta.env` (frontend) or `dotenv` (API). Names in `.env.example`.
 - **Commits**: conventional commit prefixes (`feat:`, `fix:`, `chore:`, `docs:`).
 - **Branches**: `track/victim`, `track/responder`, `track/api`, `track/snowflake`; merge to `main` via PR-light review (just a thumbs-up; we're moving fast).

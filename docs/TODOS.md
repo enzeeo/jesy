@@ -6,6 +6,27 @@ Coordinator-facing TODOs for the 18h build. Use `docs/TASKS.md` for per-track ch
 
 ## Critical Path
 
+### Phase -1 — Fixture UI Preview
+
+- [ ] Create the full pnpm monorepo skeleton now; implement real UI depth only in victim/responder/types, leaving API/Snowflake as stubs.
+- [ ] Add shared contract types: `DashboardState`, `RoutePreview`, `VictimStatusView`, and `FixtureTimelineEvent`.
+- [ ] Add `packages/fixtures` for shared 12-incident preview data; reserve `scenarios/texas-flood.json` for final 50-row demo source.
+- [ ] Build first UI pass with 12 curated mock incidents and full Synthetic Profiles covering critical, medium, low, duplicate cluster, degraded triage, partial assignment, unmet resource need, route fallback, and victim status.
+- [ ] Give victim and responder previews equal polish during fixture preview.
+- [ ] Use shared severity/resource/focus tokens while splitting tone: responder command center, victim panic-proof mobile aid.
+- [ ] Optimize victim for mobile portrait and responder for desktop fullscreen; do not spend v1 time on full responsive coverage.
+- [ ] Add mock Start Scenario, Inject Critical Incident, Reset, 4x Speed, and Step Through controls backed by a scripted 60-second fixture timeline.
+- [ ] Keep mock/live switch behind typed data adapters selected by `VITE_DATA_MODE=fixture|api`, not inline fixture imports in UI components.
+- [ ] Build map preview so it uses Mapbox with a token and a CSS/SVG Houston fallback without one.
+- [ ] Keep fixture/live mode visibly labeled so mock data is not confused with final Snowflake processing.
+- [ ] Validate responder dashboard choreography: blank map → scenario starts → pins/queue fill → side sheet → roster decrement → route drawer → injected critical incident.
+- [ ] Responder preview must show degraded triage chip, partial assignment, unmet need, route fallback, reconnect/fixture badge, and duplicate cluster merge.
+- [ ] Validate victim PWA choreography: home → skippable profile → inventory chips → text incident → GPS/manual-location fallback → status screen.
+- [ ] Status screen must show Received, Being triaged, Help assigned with ETA, Low-confidence location, and Unmet resource states calmly.
+- [ ] Add `/demo` shortcuts in both apps for rapid fixture preview.
+- [ ] Use planned `@disaster/types` shapes for fixtures so mock UI can become scaffold for live integration.
+- [ ] Capture screenshots for both `/demo` flows; after one good pass, stop fixture polish and move to live API/Snowflake pipeline.
+
 ### H0-H1.5 — Scaffold Gate
 
 - [ ] One owner runs the template scaffold from `docs/TEMPLATE.md`.
@@ -63,6 +84,7 @@ Coordinator-facing TODOs for the 18h build. Use `docs/TASKS.md` for per-track ch
 - [x] Admin/roster mutation endpoints require `ADMIN_TOKEN`.
 - [x] Severity parse failures produce visible degraded fallback, not silent defaults.
 - [x] Leaflet fallback is cut; use route fallback, fixture mode, and screenshot/video backup.
+- [x] Mock data for everything is allowed only for **Fixture UI Preview**; final judged demo still needs live Snowflake processing.
 
 ---
 
