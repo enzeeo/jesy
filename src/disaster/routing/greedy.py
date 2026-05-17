@@ -67,7 +67,12 @@ def greedy_assign(
             unassigned.append(incident.id)
             continue
         target = (incident.location.lat, incident.location.lng)
-        best = min(available, key=lambda r: _haversine_km(current_loc[r.id], target))
+        # Explicit tiebreaker on str(r.id) so equal-distance ties resolve
+        # deterministically — needed for counterfactual replay (analysis/counterfactual.py).
+        best = min(
+            available,
+            key=lambda r: (_haversine_km(current_loc[r.id], target), str(r.id)),
+        )
         from_lat, from_lng = current_loc[best.id]
         dist_km = _haversine_km((from_lat, from_lng), target)
         eta_s = (dist_km / _AVG_RESPONSE_KPH) * 3600.0

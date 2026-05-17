@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api";
 
 interface Props {
@@ -68,6 +69,12 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction, o
           />
         ))}
         <div className="mx-2 h-6 w-px bg-border-strong" />
+        <Link
+          href="/analysis"
+          className="mono border border-border-strong bg-bg-elev px-2.5 py-1 text-xs text-fg-primary hover:bg-bg-base"
+        >
+          AAR
+        </Link>
         <TopBarButton label="Reset" pending={pendingActions.has("reset")} onClick={() => run("reset", api.reset)} />
       </div>
     </div>

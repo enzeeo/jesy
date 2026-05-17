@@ -7,6 +7,7 @@ Two modes:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections import Counter
@@ -18,6 +19,10 @@ from disaster.models import IncidentReport
 from disaster.snowflake.tables import SCHEMA_CLEAN
 
 log = logging.getLogger(__name__)
+
+# Same connection-wedge risk as tiles + aar — a sick shared Snowflake session
+# can hang this query until the request times out at the proxy layer.
+_CORTEX_QUERY_TIMEOUT_S = 4.0
 
 
 def _db() -> str:
@@ -69,7 +74,7 @@ async def detect_clusters_snowflake(
     window_minutes: int = 5,
 ) -> list[dict[str, Any]]:
     """Run the real SQL cluster query, return alert dicts."""
-    rows = await runner(CORTEX_CLUSTER_SQL, ())
+    rows = await asyncio.wait_for(runner(CORTEX_CLUSTER_SQL, ()), timeout=_CORTEX_QUERY_TIMEOUT_S)
     return [_row_to_alert(r, window_minutes) for r in rows]
 
 

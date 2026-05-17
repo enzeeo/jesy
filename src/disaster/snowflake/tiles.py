@@ -6,6 +6,7 @@ In-memory fallbacks use IncidentStore when Snowflake is not configured.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import statistics
@@ -18,6 +19,13 @@ from disaster.models import IncidentReport, Severity
 from disaster.snowflake.tables import SCHEMA_CLEAN, SCHEMA_FEATURES, SCHEMA_RAW, SCHEMA_SERVING
 
 log = logging.getLogger(__name__)
+
+# Per-tile-query budget. The runner shares one Snowflake connection with the
+# rest of the app; if Snowflake half-closes a session, an unprotected query
+# hangs until the Next.js proxy gives up (~30s) and the dashboard surfaces
+# ECONNRESET. With a tight timeout we drop the bad query, log a warning, and
+# fall back to the in-memory synthetic computation that already exists below.
+_TILE_QUERY_TIMEOUT_S = 4.0
 
 
 def _db() -> str:
@@ -157,11 +165,15 @@ async def run_tile(
     if runner is not None:
         try:
             sql = TILE_QUERIES[tile_name]
-            rows = await runner(sql, ())
+            rows = await asyncio.wait_for(runner(sql, ()), timeout=_TILE_QUERY_TIMEOUT_S)
             if tile_name == "incident_rate" and not rows:
                 q = _tile_queries()
-                rows = await runner(q["incident_rate_fallback"], ())
+                rows = await asyncio.wait_for(
+                    runner(q["incident_rate_fallback"], ()), timeout=_TILE_QUERY_TIMEOUT_S,
+                )
             return {"tile": tile_name, "source": "snowflake", "rows": _normalize_rows(rows)}
+        except TimeoutError:
+            log.warning("tile %s: snowflake timed out, using in-memory fallback", tile_name)
         except Exception as e:  # noqa: BLE001
             log.warning("tile %s: snowflake failed (%s), using in-memory fallback", tile_name, e)
 

@@ -361,6 +361,7 @@ def emit_route_optimization(
     payload: dict[str, Any],
     routing_input_id: str | None = None,
     road_access_id: str | None = None,
+    sim_run_id: str | None = None,
 ) -> None:
     created_at = _now().isoformat()
     routes = payload.get("routes") or {}
@@ -396,9 +397,10 @@ def emit_route_optimization(
         "ROUTE_STOP_LIMIT": payload.get("route_stop_limit"),
         "MAX_CANDIDATES": payload.get("max_candidates"),
         "ROAD_ACCESS_ID": road_access_id,
-        "ROAD_ACCESS_SUMMARY": payload.get("road_access_summary"),
-        "UNASSIGNED": payload.get("unassigned") or [],
-        "PAYLOAD": payload,
+        "ROAD_ACCESS_SUMMARY": json.dumps(payload.get("road_access_summary")),
+        "UNASSIGNED": json.dumps(payload.get("unassigned") or []),
+        "PAYLOAD": json.dumps(payload),
+        "SIM_RUN_ID": sim_run_id,
     })
 
     seq = 0

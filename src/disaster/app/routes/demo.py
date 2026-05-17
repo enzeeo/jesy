@@ -164,7 +164,11 @@ async def trigger_call(request: Request, scenario: str = "biltmore_immediate") -
             log.warning("trigger-call: extraction failed (%s), falling back to stub", e)
             incident = _stub_extraction(canonical_scenario, transcript)
 
-    incident = incident.model_copy(update={"source": IncidentSource.VOICE})
+    # Stamp active sim_run_id so demo-triggered calls are AAR-visible.
+    incident = incident.model_copy(update={
+        "source": IncidentSource.VOICE,
+        "sim_run_id": state.active_sim_run_id,
+    })
 
     try:
         triage = score(incident, current_time=datetime.now(UTC))

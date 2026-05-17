@@ -72,7 +72,11 @@ async def voice_intake(payload: dict[str, Any], request: Request) -> IncidentRep
         raise HTTPException(status_code=503, detail="LLM service unavailable") from e
 
     # Force source=voice — the agent shouldn't override this even if it tries.
-    extracted = extracted.model_copy(update={"source": IncidentSource.VOICE})
+    # Stamp active sim_run_id so voice intake during a demo run is AAR-visible.
+    extracted = extracted.model_copy(update={
+        "source": IncidentSource.VOICE,
+        "sim_run_id": state.active_sim_run_id,
+    })
 
     try:
         triage = score(extracted, current_time=datetime.now(UTC))

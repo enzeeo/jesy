@@ -25,11 +25,15 @@ def solve_vrp(
     incidents: list[IncidentReport],
     responders: list[ResponderUnit],
     *,
-    time_budget_s: float = 2.0,
+    time_budget_s: float | None = 2.0,
     vehicle_capacity: int = 5,
 ):
     """
     Returns an Assignment. Raises NoFeasibleSolution on infeasible/timeout.
+
+    Set time_budget_s=None for the deterministic replay path: skips guided local
+    search and uses only the first-solution heuristic (PATH_CHEAPEST_ARC). The
+    output becomes bit-stable across runs at the cost of optimality.
     """
     try:
         from ortools.constraint_solver import pywrapcp, routing_enums_pb2
@@ -84,12 +88,17 @@ def solve_vrp(
 
     search = pywrapcp.DefaultRoutingSearchParameters()
     search.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
-    search.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-    search.time_limit.FromSeconds(int(time_budget_s))
+    if time_budget_s is not None:
+        # Wall-clock-bounded GLS: better solutions, non-deterministic across runs.
+        search.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+        )
+        search.time_limit.FromSeconds(int(time_budget_s))
+    # else: deterministic first-solution-only mode for replay (no GLS, no time budget)
 
     solution = routing.SolveWithParameters(search)
     if solution is None:
-        raise NoFeasibleSolution(f"vrp: no solution within {time_budget_s}s")
+        raise NoFeasibleSolution(f"vrp: no solution (time_budget={time_budget_s}s)")
 
     routes: dict[UUID, list[RouteLeg]] = {r.id: [] for r in responders}
     assigned_nodes: set[int] = set()

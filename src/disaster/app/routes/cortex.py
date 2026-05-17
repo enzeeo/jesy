@@ -42,6 +42,8 @@ async def cortex_scan(request: Request) -> dict[str, Any]:
         try:
             alerts = await detect_clusters_snowflake(runner)
             source = "snowflake"
+        except TimeoutError:
+            log.warning("cortex: snowflake cluster query timed out, falling back")
         except Exception as e:  # noqa: BLE001 — connector raises diverse types
             log.warning("cortex: snowflake cluster query failed (%s), falling back", e)
     if not alerts:
