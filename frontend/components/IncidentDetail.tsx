@@ -1,15 +1,39 @@
 "use client";
 import { useState } from "react";
-import type { IncidentReport, Severity } from "@/lib/types";
+import type { IncidentReport, ResponderUnit, RouteLeg, Severity } from "@/lib/types";
 import { ALL_SEVERITIES, SEVERITY_VISUAL } from "@/lib/severity";
 import { api } from "@/lib/api";
 
+export interface RecommendedDispatch {
+  routeId: string | null;
+  responderId: string;
+  responder?: ResponderUnit;
+  leg: RouteLeg;
+}
+
 interface Props {
   incident: IncidentReport;
+  recommendedDispatch: RecommendedDispatch | null;
+  dispatching: boolean;
+  dispatchError: string | null;
+  onStartDispatch: (dispatch: RecommendedDispatch) => Promise<void>;
   onClose: () => void;
 }
 
-export function IncidentDetail({ incident, onClose }: Props) {
+function formatEta(seconds?: number | null): string {
+  if (seconds == null) return "ETA --";
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  return `ETA ${minutes} min`;
+}
+
+export function IncidentDetail({
+  incident,
+  recommendedDispatch,
+  dispatching,
+  dispatchError,
+  onStartDispatch,
+  onClose,
+}: Props) {
   const v = SEVERITY_VISUAL[incident.severity];
   const [escalating, setEscalating] = useState(false);
 
@@ -70,6 +94,42 @@ export function IncidentDetail({ incident, onClose }: Props) {
             <div className="mt-1 text-xs text-fg-secondary italic">"{incident.call_transcript}"</div>
           </div>
         )}
+
+        <div className="border-t border-border-strong pt-2">
+          <div className="mono text-xs uppercase tracking-wider text-fg-secondary">Dispatch</div>
+          {recommendedDispatch ? (
+            <div className="mt-2 space-y-2">
+              <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                <div>
+                  <div className="text-sm font-semibold text-fg-primary">
+                    {recommendedDispatch.responder?.callsign ?? recommendedDispatch.responderId}
+                  </div>
+                  <div className="mono text-xs text-fg-muted">
+                    {recommendedDispatch.responder?.type ?? "unit"} · {formatEta(recommendedDispatch.leg.eta_seconds)}
+                    {recommendedDispatch.leg.distance_km != null
+                      ? ` · ${recommendedDispatch.leg.distance_km.toFixed(1)} km`
+                      : ""}
+                  </div>
+                </div>
+                <button
+                  disabled={dispatching || !recommendedDispatch.routeId || !recommendedDispatch.leg.leg_id}
+                  onClick={() => onStartDispatch(recommendedDispatch)}
+                  className="mono border border-status-good px-3 py-1 text-xs font-bold uppercase text-status-good
+                             hover:bg-bg-elev disabled:cursor-not-allowed disabled:border-border-strong
+                             disabled:text-fg-muted disabled:opacity-50"
+                >
+                  {dispatching ? "Sending" : "Send"}
+                </button>
+              </div>
+              {!recommendedDispatch.routeId || !recommendedDispatch.leg.leg_id ? (
+                <div className="mono text-xs text-status-warn">Route identifiers unavailable.</div>
+              ) : null}
+              {dispatchError ? <div className="mono text-xs text-status-warn">{dispatchError}</div> : null}
+            </div>
+          ) : (
+            <div className="mono mt-2 text-xs text-fg-muted">No recommended responder for this incident.</div>
+          )}
+        </div>
 
         <div className="border-t border-border-strong pt-2">
           <div className="mono text-xs uppercase tracking-wider text-fg-secondary">Escalate</div>

@@ -2,12 +2,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import type { IncidentReport, ResponderUnit } from "@/lib/types";
+import type {
+  IncidentReport,
+  RoadAccessFeatureCollection,
+  RoadAccessSummary,
+  RouteLeg,
+  RoutingResponse,
+  ResponderUnit,
+} from "@/lib/types";
 import { SEVERITY_VISUAL } from "@/lib/severity";
 
 interface Props {
   incidents: IncidentReport[];
   responders: ResponderUnit[];
+  routingResponse: RoutingResponse | null;
   flashing: Set<string>;
   onSelect: (id: string) => void;
 }
@@ -17,7 +25,32 @@ const HILO = { lng: -155.0900, lat: 19.7297, zoom: 13.5 };
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 
-export function MapView({ incidents, responders, flashing, onSelect }: Props) {
+function isRoadAccessFeatureCollection(
+  roadAccess: RoadAccessSummary | RoadAccessFeatureCollection | null | undefined
+): roadAccess is RoadAccessFeatureCollection {
+  return roadAccess?.type === "FeatureCollection" && Array.isArray(roadAccess.features);
+}
+
+function getRoadAccessFeatureCollection(
+  roadAccess: RoadAccessSummary | RoadAccessFeatureCollection | null | undefined
+): RoadAccessFeatureCollection {
+  if (isRoadAccessFeatureCollection(roadAccess)) return roadAccess;
+  if (roadAccess?.feature_collection) return roadAccess.feature_collection;
+  if (roadAccess?.features) {
+    return { type: "FeatureCollection", features: roadAccess.features };
+  }
+  return { type: "FeatureCollection", features: [] };
+}
+
+function getRouteCoordinates(leg: RouteLeg): [number, number][] {
+  if (leg.route_geometry?.coordinates?.length) return leg.route_geometry.coordinates;
+  return [
+    [leg.from_location.lng, leg.from_location.lat],
+    [leg.to_location.lng, leg.to_location.lat],
+  ];
+}
+
+export function MapView({ incidents, responders, routingResponse, flashing, onSelect }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
@@ -58,6 +91,74 @@ export function MapView({ incidents, responders, flashing, onSelect }: Props) {
       for (const id of labelLayers) {
         if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none");
       }
+
+      map.addSource("road-access", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "road-access-fill",
+        type: "fill",
+        source: "road-access",
+        paint: {
+          "fill-color": [
+            "match", ["get", "road_status"],
+            "confirmed_closed", "#EF4444",
+            "restricted", "#F97316",
+            "limited", "#FACC15",
+            "#64748B",
+          ],
+          "fill-opacity": 0.18,
+        },
+      });
+      map.addLayer({
+        id: "road-access-outline",
+        type: "line",
+        source: "road-access",
+        paint: {
+          "line-color": [
+            "match", ["get", "road_status"],
+            "confirmed_closed", "#FCA5A5",
+            "restricted", "#FDBA74",
+            "limited", "#FDE68A",
+            "#CBD5E1",
+          ],
+          "line-width": 1.5,
+          "line-opacity": 0.75,
+        },
+      });
+
+      map.addSource("responder-routes", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "responder-route-lines",
+        type: "line",
+        source: "responder-routes",
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
+        paint: {
+          "line-color": [
+            "case",
+            ["boolean", ["get", "degraded"], false], "#F97316",
+            "#38BDF8",
+          ],
+          "line-width": [
+            "case",
+            ["boolean", ["get", "degraded"], false], 2.5,
+            3.5,
+          ],
+          "line-opacity": 0.82,
+          "line-dasharray": [
+            "case",
+            ["boolean", ["get", "degraded"], false], ["literal", [1.5, 1.2]],
+            ["literal", [1, 0]],
+          ],
+        },
+      });
 
       // P1 #6: cluster: true on the incident source
       map.addSource("incidents", {
@@ -138,8 +239,19 @@ export function MapView({ incidents, responders, flashing, onSelect }: Props) {
         type: "circle",
         source: "responders",
         paint: {
-          "circle-color": "#60A5FA",
-          "circle-radius": 6,
+          "circle-color": [
+            "match", ["get", "status"],
+            "on_scene", "#22C55E",
+            "en_route", "#38BDF8",
+            "assigned", "#FACC15",
+            "out_of_service", "#64748B",
+            "#60A5FA",
+          ],
+          "circle-radius": [
+            "case",
+            ["==", ["get", "status"], "on_scene"], 7,
+            6,
+          ],
           "circle-stroke-width": 2,
           "circle-stroke-color": "#FFFFFF",
         },
@@ -198,6 +310,37 @@ export function MapView({ incidents, responders, flashing, onSelect }: Props) {
     })),
   }), [responders]);
 
+  const routeLinesGeoJSON = useMemo(() => ({
+    type: "FeatureCollection" as const,
+    features: Object.entries(routingResponse?.routes ?? {}).flatMap(([responderId, legs]) =>
+      legs.map((leg, index) => ({
+        type: "Feature" as const,
+        geometry: {
+          type: "LineString" as const,
+          coordinates: getRouteCoordinates(leg),
+        },
+        properties: {
+          responder_id: responderId,
+          leg_index: index,
+          target_id: leg.target_id ?? leg.incident_id ?? null,
+          target_type: leg.target_type ?? (leg.incident_id ? "incident" : null),
+          incident_id: leg.incident_id ?? null,
+          distance_km: leg.distance_km,
+          eta_seconds: leg.eta_seconds,
+          arrival_seconds: leg.arrival_seconds ?? null,
+          degraded: leg.degraded ?? false,
+          provider_status: leg.provider_status ?? null,
+          assignment_reason: leg.assignment_reason ?? null,
+        },
+      }))
+    ),
+  }), [routingResponse]);
+
+  const roadAccessGeoJSON = useMemo(
+    () => getRoadAccessFeatureCollection(routingResponse?.road_access),
+    [routingResponse]
+  );
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -211,6 +354,20 @@ export function MapView({ incidents, responders, flashing, onSelect }: Props) {
     const src = map.getSource("responders") as mapboxgl.GeoJSONSource | undefined;
     if (src) src.setData(respondersGeoJSON as any);
   }, [respondersGeoJSON]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const src = map.getSource("responder-routes") as mapboxgl.GeoJSONSource | undefined;
+    if (src) src.setData(routeLinesGeoJSON as any);
+  }, [routeLinesGeoJSON]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const src = map.getSource("road-access") as mapboxgl.GeoJSONSource | undefined;
+    if (src) src.setData(roadAccessGeoJSON as any);
+  }, [roadAccessGeoJSON]);
 
   if (!TOKEN) {
     return (

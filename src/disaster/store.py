@@ -16,9 +16,49 @@ Production would back this with sqlite or Postgres but the API stays the same.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from disaster.models import IncidentReport, ResponderStatus, ResponderUnit
+
+
+class DispatchConflictError(RuntimeError):
+    """Raised when a responder already has a different active dispatch."""
+
+
+@dataclass(frozen=True)
+class RouteRecommendationLeg:
+    route_id: str
+    leg_id: str
+    responder_id: UUID
+    incident_id: UUID | None
+    target_id: str | None
+    target_type: str | None
+    leg: dict[str, Any]
+    solver: str
+
+
+@dataclass(frozen=True)
+class RouteRecommendation:
+    route_id: str
+    solver: str
+    payload: dict[str, Any]
+    legs: dict[str, RouteRecommendationLeg]
+
+
+@dataclass(frozen=True)
+class ActiveDispatch:
+    dispatch_id: str
+    route_id: str
+    leg_id: str
+    responder_id: UUID
+    incident_id: UUID
+    started_by: str
+    started_at: datetime
+    solver: str
+    leg: dict[str, Any]
 
 
 class IncidentStore:
@@ -94,3 +134,56 @@ class ResponderStore:
             })
             self._units[unit_id] = updated
             return updated
+
+
+class RouteRecommendationStore:
+    def __init__(self) -> None:
+        self._recommendations: dict[str, RouteRecommendation] = {}
+        self._latest_route_id: str | None = None
+        self._lock = asyncio.Lock()
+
+    async def save(self, recommendation: RouteRecommendation) -> RouteRecommendation:
+        async with self._lock:
+            self._recommendations[recommendation.route_id] = recommendation
+            self._latest_route_id = recommendation.route_id
+            return recommendation
+
+    async def get_leg(self, route_id: str, leg_id: str) -> RouteRecommendationLeg | None:
+        async with self._lock:
+            recommendation = self._recommendations.get(route_id)
+            if recommendation is None:
+                return None
+            return recommendation.legs.get(leg_id)
+
+    async def latest_route_id(self) -> str | None:
+        async with self._lock:
+            return self._latest_route_id
+
+
+class ActiveDispatchStore:
+    def __init__(self) -> None:
+        self._dispatches_by_leg: dict[tuple[str, str], ActiveDispatch] = {}
+        self._dispatches_by_responder: dict[UUID, ActiveDispatch] = {}
+        self._lock = asyncio.Lock()
+
+    async def start(self, dispatch: ActiveDispatch) -> tuple[ActiveDispatch, bool]:
+        async with self._lock:
+            dispatch_key = (dispatch.route_id, dispatch.leg_id)
+            existing = self._dispatches_by_leg.get(dispatch_key)
+            if existing is not None:
+                return existing, False
+
+            responder_dispatch = self._dispatches_by_responder.get(dispatch.responder_id)
+            if responder_dispatch is not None:
+                raise DispatchConflictError(
+                    f"responder {dispatch.responder_id} already has active dispatch "
+                    f"{responder_dispatch.dispatch_id}"
+                )
+
+            self._dispatches_by_leg[dispatch_key] = dispatch
+            self._dispatches_by_responder[dispatch.responder_id] = dispatch
+            return dispatch, True
+
+    async def get_for_responder(self, responder_id: UUID) -> ActiveDispatch | None:
+        async with self._lock:
+            return self._dispatches_by_responder.get(responder_id)

@@ -11,12 +11,14 @@ interface Props {
 
 export function TopBar({ connected, incidentsCount, respondersCount, onAction }: Props) {
   const [scenarios, setScenarios] = useState<Array<{ key: string; preview: string }>>([]);
-  const [now, setNow] = useState(new Date());
+  const [nowUtc, setNowUtc] = useState("--:--:--");
   const [pending, setPending] = useState<string | null>(null);
 
   useEffect(() => {
     api.scenarios().then((s) => setScenarios(s.scenarios)).catch(() => {});
-    const t = setInterval(() => setNow(new Date()), 1000);
+    const updateClock = () => setNowUtc(new Date().toISOString().slice(11, 19));
+    updateClock();
+    const t = setInterval(updateClock, 1000);
     return () => clearInterval(t);
   }, []);
 
@@ -42,7 +44,7 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction }:
           <span className={connected ? "text-status-good" : "text-status-warn"}>
             {connected ? "● live" : "● reconnecting"}
           </span>
-          <span>{now.toISOString().slice(11, 19)} UTC</span>
+          <span>{nowUtc} UTC</span>
         </div>
       </div>
 

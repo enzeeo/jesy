@@ -28,6 +28,7 @@ from disaster.app.routes.demo import router as demo_router
 from disaster.app.routes.events import router as events_router
 from disaster.app.routes.incidents import router as incidents_router
 from disaster.app.routes.intake import router as intake_router
+from disaster.app.routes.responders import router as responders_router
 from disaster.app.routes.routing import router as routing_router
 from disaster.app.routes.sim import router as sim_router
 from disaster.app.routes.tiles import router as tiles_router
@@ -115,6 +116,7 @@ def create_app(
     app.include_router(incidents_router)
     app.include_router(triage_router)
     app.include_router(events_router)
+    app.include_router(responders_router)
     app.include_router(routing_router)
     app.include_router(intake_router)
     app.include_router(tiles_router)

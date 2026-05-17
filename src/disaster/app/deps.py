@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING
 
 from disaster.events import EventBroker
 from disaster.snowflake import SnowflakeWriter
-from disaster.store import IncidentStore, ResponderStore
+from disaster.store import (
+    ActiveDispatchStore,
+    IncidentStore,
+    ResponderStore,
+    RouteRecommendationStore,
+)
+from disaster.tracking import ResponderTrackingStore
 
 if TYPE_CHECKING:
     from disaster.llm import LLMClient
@@ -20,6 +26,9 @@ if TYPE_CHECKING:
 class AppState:
     incidents: IncidentStore = field(default_factory=IncidentStore)
     responders: ResponderStore = field(default_factory=ResponderStore)
+    route_recommendations: RouteRecommendationStore = field(default_factory=RouteRecommendationStore)
+    active_dispatches: ActiveDispatchStore = field(default_factory=ActiveDispatchStore)
+    responder_tracking: ResponderTrackingStore = field(default_factory=ResponderTrackingStore)
     events: EventBroker = field(default_factory=EventBroker)
     snowflake: SnowflakeWriter | None = None        # injected at startup
     llm_client: LLMClient | None = None             # injected at startup
