@@ -23,6 +23,7 @@ from fastapi import FastAPI
 from disaster.app.deps import AppState
 from disaster.app.exception_handler import register as register_exception_handler
 from disaster.app.middleware import register_elevenlabs_hmac
+from disaster.app.routes.analysis import router as analysis_router
 from disaster.app.routes.cortex import router as cortex_router
 from disaster.app.routes.demo import router as demo_router
 from disaster.app.routes.events import router as events_router
@@ -123,6 +124,7 @@ def create_app(
     app.include_router(cortex_router)
     app.include_router(sim_router)
     app.include_router(demo_router)
+    app.include_router(analysis_router)
 
     # CORS: allow the Next.js dev origin (and *) for hackathon ergonomics.
     from fastapi.middleware.cors import CORSMiddleware
