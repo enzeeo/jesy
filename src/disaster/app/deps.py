@@ -23,6 +23,8 @@ from disaster.tracking import ResponderTrackingStore
 
 if TYPE_CHECKING:
     from disaster.llm import LLMClient
+    from disaster.movement import DispatchMovementService
+    from disaster.snowflake.live_ops import LiveOpsScheduler
 
 
 @dataclass
@@ -33,10 +35,12 @@ class AppState:
     active_dispatches: ActiveDispatchStore = field(default_factory=ActiveDispatchStore)
     road_access: RoadAccessStore = field(default_factory=RoadAccessStore)
     responder_tracking: ResponderTrackingStore = field(default_factory=ResponderTrackingStore)
+    dispatch_movement: DispatchMovementService | None = field(init=False, default=None)
     events: EventBroker = field(default_factory=EventBroker)
     chat_store: ChatStore = field(default_factory=ChatStore)
     snowflake: SnowflakeWriter | None = None        # injected at startup
     llm_client: LLMClient | None = None             # injected at startup
+    live_ops_scheduler: LiveOpsScheduler | None = None
     elevenlabs_secret: bytes | None = None          # for HMAC verification
 
     # ElevenLabs Conversational AI: maps the agent's conversation_id to the
@@ -51,3 +55,7 @@ class AppState:
     # /demo/trigger-call would otherwise have sim_run_id=None and be invisible
     # to the AAR). Singleton: /sim/start returns 409 if this is already set.
     active_sim_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        from disaster.movement import DispatchMovementService
+        self.dispatch_movement = DispatchMovementService(state=self)

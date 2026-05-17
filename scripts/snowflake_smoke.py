@@ -7,6 +7,7 @@ Snowflake smoke test.
 
 Exits 0 on green, 1 on any failure.
 """
+# ruff: noqa: E402
 from __future__ import annotations
 
 import argparse
@@ -26,9 +27,10 @@ load_dotenv(_PROJECT_ROOT / ".env", override=False)
 
 from disaster.snowflake.connection import _connect_params, env_configured
 from disaster.snowflake.tables import (
+    REQUIRED_DYNAMIC_TABLES_BY_SCHEMA,
     REQUIRED_TABLES_BY_SCHEMA,
-    SCHEMA_RAW,
     SCHEMA_CLEAN,
+    SCHEMA_RAW,
     SCHEMA_SERVING,
     database_name,
     qualified_table,
@@ -47,6 +49,88 @@ def ok(msg: str) -> None:
 
 def fail(msg: str) -> None:
     print(f"  {RED}✗{RESET} {msg}")
+
+
+def warn(msg: str) -> None:
+    print(f"  {YELLOW}!{RESET} {msg}")
+
+
+def render_init_sql(sql_text: str) -> str:
+    """Fill DDL placeholders that depend on the operator's environment."""
+    warehouse = os.environ.get("SNOWFLAKE_WAREHOUSE", "DISASTER_WH")
+    return sql_text.replace("{{SNOWFLAKE_WAREHOUSE}}", warehouse)
+
+
+def is_dynamic_table_statement(statement: str) -> bool:
+    normalized = " ".join(statement.upper().split())
+    return (
+        "CREATE DYNAMIC TABLE" in normalized
+        or "DROP DYNAMIC TABLE" in normalized
+        or "ALTER DYNAMIC TABLE" in normalized
+        or "SHOW DYNAMIC TABLES" in normalized
+    )
+
+
+def is_graceful_dynamic_error(error: Exception) -> bool:
+    text = str(error).lower()
+    markers = (
+        "dynamic table",
+        "insufficient privileges",
+        "not authorized",
+        "does not exist or not authorized",
+        "warehouse",
+        "clustering",
+        "cluster by",
+        "unsupported",
+    )
+    return any(marker in text for marker in markers)
+
+
+def statement_label(statement: str) -> str:
+    normalized = " ".join(statement.split())
+    return normalized[:120] + ("..." if len(normalized) > 120 else "")
+
+
+def run_init_sql(conn, sql_text: str) -> list[str]:
+    """Run init SQL, warning instead of failing for optional dynamic-table setup."""
+    skipped: list[str] = []
+    rendered_sql = render_init_sql(sql_text)
+    cur = conn.cursor()
+    try:
+        for statement in (s.strip() for s in rendered_sql.split(";") if s.strip()):
+            try:
+                cur.execute(statement)
+            except Exception as error:
+                if is_dynamic_table_statement(statement) and is_graceful_dynamic_error(error):
+                    label = statement_label(statement)
+                    skipped.append(label)
+                    warn(f"dynamic table setup skipped: {label} ({error})")
+                    continue
+                raise
+    finally:
+        cur.close()
+    return skipped
+
+
+def verify_dynamic_tables(conn, db: str) -> None:
+    """Report dynamic table availability without failing the smoke run."""
+    cur = conn.cursor()
+    try:
+        for schema, tables in REQUIRED_DYNAMIC_TABLES_BY_SCHEMA.items():
+            try:
+                cur.execute(f"SHOW DYNAMIC TABLES IN SCHEMA {db}.{schema}")
+                existing = {row[1].upper() for row in cur.fetchall()}
+            except Exception as error:  # noqa: BLE001
+                warn(f"schema {schema}: dynamic table check skipped ({error})")
+                continue
+
+            missing = [table for table in tables if table.upper() not in existing]
+            if missing:
+                warn(f"schema {schema}: missing dynamic tables {missing}; app will use fallback data")
+            else:
+                ok(f"schema {schema}: {len(tables)} dynamic table(s) present")
+    finally:
+        cur.close()
 
 
 def migrate_incidents_schema(cur, db: str) -> None:
@@ -118,18 +202,22 @@ def main() -> int:
     if args.init:
         sql_path = Path(__file__).resolve().parent / "snowflake_init.sql"
         sql_text = sql_path.read_text()
-        cur = conn.cursor()
+        migration_cur = None
         try:
-            for stmt in (s.strip() for s in sql_text.split(";") if s.strip()):
-                cur.execute(stmt)
-            ok("ran snowflake_init.sql")
-            migrate_incidents_schema(cur, db)
+            skipped_dynamic = run_init_sql(conn, sql_text)
+            if skipped_dynamic:
+                warn(f"ran snowflake_init.sql with {len(skipped_dynamic)} optional dynamic-table skip(s)")
+            else:
+                ok("ran snowflake_init.sql")
+            migration_cur = conn.cursor()
+            migrate_incidents_schema(migration_cur, db)
             ok("migrated CLEAN.INCIDENTS location schema")
         except Exception as e:  # noqa: BLE001
             fail(f"DDL failed: {e}")
             return 1
         finally:
-            cur.close()
+            if migration_cur is not None:
+                migration_cur.close()
 
     cur = conn.cursor()
     missing_all: list[str] = []
@@ -148,6 +236,8 @@ def main() -> int:
     if missing_all:
         fail(f"missing tables: {missing_all}. Run with --init to create them.")
         return 1
+
+    verify_dynamic_tables(conn, db)
 
     if args.seed:
         cur = conn.cursor()

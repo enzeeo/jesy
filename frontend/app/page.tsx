@@ -21,6 +21,7 @@ import { MapView } from "@/components/Map";
 import { IncidentList } from "@/components/IncidentList";
 import { IncidentDetail, type RecommendedDispatch } from "@/components/IncidentDetail";
 import { InfraPanel } from "@/components/InfraPanel";
+import { OpsPanel } from "@/components/OpsPanel";
 import { SnowflakeTiles } from "@/components/SnowflakeTiles";
 import { CortexChat } from "@/components/CortexChat";
 import { CortexToasts } from "@/components/CortexToast";
@@ -664,15 +665,22 @@ export default function Dashboard() {
         </aside>
       </div>
 
-      <div className="h-[180px] border-t border-border-strong bg-bg-base flex">
-        <div className="w-[280px]">
-          <ErrorBoundary label="Infra panel">
-            <InfraPanel callsHandled={callsHandled} incidentsCount={incidents.length} />
-          </ErrorBoundary>
+      <div className="relative h-[160px] border-t border-border-strong bg-bg-base">
+        <div className="mr-[360px] flex h-full">
+          <div className="w-[280px]">
+            <ErrorBoundary label="Infra panel">
+              <InfraPanel callsHandled={callsHandled} incidentsCount={incidents.length} />
+            </ErrorBoundary>
+          </div>
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <ErrorBoundary label="Snowflake tiles">
+              <SnowflakeTiles refreshSignal={tileRefreshSignal} />
+            </ErrorBoundary>
+          </div>
         </div>
-        <div className="flex-1">
-          <ErrorBoundary label="Snowflake tiles">
-            <SnowflakeTiles refreshSignal={tileRefreshSignal} />
+        <div className="absolute bottom-0 right-0 h-[280px] w-[360px] border-t border-border-strong">
+          <ErrorBoundary label="Live ops">
+            <OpsPanel refreshSignal={tileRefreshSignal} />
           </ErrorBoundary>
         </div>
       </div>

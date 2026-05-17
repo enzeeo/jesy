@@ -10,6 +10,7 @@ orchestrates tool calls instead of fixed query plans.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -17,7 +18,11 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from disaster.models import IncidentReport, IncidentStatus, ResponderUnit
-from disaster.snowflake.chat_queries import build_chat_query_plan, query_params, wants_head_injury_stats
+from disaster.snowflake.chat_queries import (
+    build_chat_query_plan,
+    query_params,
+    wants_head_injury_stats,
+)
 from disaster.snowflake.tables import SCHEMA_CLEAN, database_name
 
 log = logging.getLogger(__name__)
@@ -93,6 +98,18 @@ def _norm_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 normalized[key] = v
         out.append(normalized)
     return out
+
+
+def _payload_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
 
 
 _OPEN_STATUSES = frozenset({
@@ -194,6 +211,24 @@ def _compose_from_warehouse(
     if alerts:
         a = alerts[0]
         parts.append(f"Latest Cortex alert: {a.get('message', '')[:160]}")
+
+    agent_rows = results.get("latest_agent_runs") or []
+    if agent_rows:
+        agent_summaries: list[str] = []
+        seen_agents: set[str] = set()
+        for row in agent_rows:
+            agent_name = str(row.get("agent_name") or "")
+            if not agent_name or agent_name in seen_agents:
+                continue
+            payload = _payload_dict(row.get("output_payload"))
+            if not payload:
+                continue
+            seen_agents.add(agent_name)
+            severity = payload.get("severity", "info")
+            summary = str(payload.get("summary") or "")[:120]
+            agent_summaries.append(f"{agent_name} {severity}: {summary}")
+        if agent_summaries:
+            parts.append("Live ops agents: " + " | ".join(agent_summaries[:3]) + ".")
 
     cluster = results.get("cluster_row") or []
     if cluster:
@@ -401,5 +436,4 @@ async def build_chat_backend(
 def _t_probe_sql() -> str:
     incidents = f"{database_name()}.{SCHEMA_CLEAN}.INCIDENTS"
     return f"SELECT COUNT(*) AS N FROM {incidents} WHERE TIMESTAMP > DATEADD(day, -7, CURRENT_TIMESTAMP())"
-
 

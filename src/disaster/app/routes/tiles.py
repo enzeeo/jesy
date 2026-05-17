@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from disaster.snowflake.live_ops import latest_ops_cards
 from disaster.snowflake.tiles import TILE_QUERIES, run_tile
 
 if TYPE_CHECKING:
@@ -32,3 +33,16 @@ async def get_tile(tile_name: str, request: Request) -> dict[str, Any]:
 @router.get("/tiles")
 async def list_tiles() -> dict[str, list[str]]:
     return {"tiles": list(TILE_QUERIES.keys())}
+
+
+@router.get("/ops")
+async def get_ops(request: Request) -> dict[str, Any]:
+    state = _state(request)
+    runner = getattr(state, "_sf_query_runner", None)
+    incidents = await state.incidents.list()
+    responders = await state.responders.list()
+    return await latest_ops_cards(
+        runner=runner,
+        fallback_incidents=incidents,
+        fallback_responders=responders,
+    )

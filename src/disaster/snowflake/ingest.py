@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from disaster.snowflake.tables import (
+    SCHEMA_AGENT,
     SCHEMA_CLEAN,
     SCHEMA_RAW,
     SCHEMA_SERVING,
@@ -299,6 +300,45 @@ def emit_cortex_alert(writer: SnowflakeWriter, alert: dict[str, Any]) -> None:
         "PAYLOAD": json.dumps(_json_safe(alert)),
         "MESSAGE": alert.get("message", ""),
         "DETECTED_AT": detected_at,
+    })
+
+
+def emit_agent_run(
+    writer: SnowflakeWriter,
+    *,
+    run_id: str,
+    agent_name: str,
+    input_payload: dict[str, Any] | None = None,
+    output_payload: dict[str, Any] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    cortex_search_hits: list[dict[str, Any]] | None = None,
+    session_id: str | None = None,
+    incident_id: str | None = None,
+    started_at: datetime | str | None = None,
+    ended_at: datetime | str | None = None,
+    latency_ms: int | None = None,
+    cost_usd: float | None = None,
+    error: str | None = None,
+) -> None:
+    started = started_at or _now()
+    ended = ended_at
+    started_text = started.isoformat() if isinstance(started, datetime) else str(started)
+    ended_text = ended.isoformat() if isinstance(ended, datetime) else (str(ended) if ended else None)
+
+    writer.write(f"{SCHEMA_AGENT}.AGENT_RUNS", {
+        "RUN_ID": run_id,
+        "AGENT_NAME": agent_name,
+        "SESSION_ID": session_id,
+        "INCIDENT_ID": incident_id,
+        "INPUT_PAYLOAD": json.dumps(_json_safe(input_payload or {})),
+        "OUTPUT_PAYLOAD": json.dumps(_json_safe(output_payload or {})),
+        "TOOL_CALLS": json.dumps(_json_safe(tool_calls or [])),
+        "CORTEX_SEARCH_HITS": json.dumps(_json_safe(cortex_search_hits or [])),
+        "STARTED_AT": started_text,
+        "ENDED_AT": ended_text,
+        "LATENCY_MS": latency_ms,
+        "COST_USD": cost_usd,
+        "ERROR": error,
     })
 
 

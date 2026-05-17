@@ -262,6 +262,32 @@ export interface CortexReassessResponse {
   previous: { severity: Severity; priority_score: number };
 }
 
+export interface SnowflakeTileResponse {
+  tile: string;
+  source: string;
+  rows: unknown[];
+}
+
+export type AgentOpsSeverity = "info" | "warning" | "critical" | string;
+
+export interface AgentOpsCard {
+  run_id: string;
+  agent_name: string;
+  severity: AgentOpsSeverity;
+  title: string;
+  summary: string;
+  recommendation: string;
+  evidence: Record<string, unknown>[];
+  timestamp: string;
+  source: string;
+}
+
+export interface AgentOpsResponse {
+  source: string;
+  generated_at: string;
+  cards: AgentOpsCard[];
+}
+
 export interface ChatSourceRef {
   query_id: string;
   tables: string[];

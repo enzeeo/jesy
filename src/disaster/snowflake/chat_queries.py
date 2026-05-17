@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from disaster.snowflake.tables import SCHEMA_CLEAN, SCHEMA_FEATURES, SCHEMA_SERVING
+from disaster.snowflake.tables import SCHEMA_AGENT, SCHEMA_CLEAN, SCHEMA_FEATURES, SCHEMA_SERVING
 
 
 def _db() -> str:
@@ -58,6 +58,7 @@ def build_chat_query_plan(
     alerts = _t(SCHEMA_SERVING, "CORTEX_ALERTS")
     resource_gap = _t(SCHEMA_FEATURES, "RESOURCE_GAP")
     clusters = _t(SCHEMA_CLEAN, "CLUSTERS")
+    agent_runs = _t(SCHEMA_AGENT, "AGENT_RUNS")
 
     plan: list[ChatQuerySpec] = [
         ChatQuerySpec(
@@ -118,6 +119,17 @@ def build_chat_query_plan(
                 WHERE DETECTED_AT > DATEADD(hour, -6, CURRENT_TIMESTAMP())
                 ORDER BY DETECTED_AT DESC
                 LIMIT 10
+            """,
+        ),
+        ChatQuerySpec(
+            query_id="latest_agent_runs",
+            tables=(f"{SCHEMA_AGENT}.AGENT_RUNS",),
+            sql=f"""
+                SELECT RUN_ID, AGENT_NAME, OUTPUT_PAYLOAD, STARTED_AT, ENDED_AT
+                FROM {agent_runs}
+                WHERE AGENT_NAME IN ('Cluster Monitor', 'Resource Gap Monitor', 'Supervisor Agent')
+                ORDER BY STARTED_AT DESC
+                LIMIT 6
             """,
         ),
     ]
