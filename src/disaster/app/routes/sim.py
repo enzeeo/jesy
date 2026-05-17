@@ -84,6 +84,10 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
     # action ever calls /sim/stop after a natural completion.
     loop = asyncio.get_running_loop()
     sim_task = sim._task  # set by sim.start() above; guaranteed non-None here
+    # Notification tasks kept alive on AppState so the GC doesn't reap them
+    # mid-publish (ruff RUF006). Best-effort cleanup via .discard in done_callback.
+    notify_tasks: set[asyncio.Task[None]] = getattr(state, "_sim_notify_tasks", set())
+    state._sim_notify_tasks = notify_tasks  # type: ignore[attr-defined]
     if sim_task is not None:
         def _on_finish(_task: asyncio.Task[None]) -> None:
             # Only clear if this is still the active run (user may have started
@@ -91,7 +95,7 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
             if state.active_sim_run_id == payload.run_id:
                 state.active_sim_run_id = None
                 # Best-effort SSE notification so the dashboard can refresh the AAR link.
-                loop.create_task(state.events.publish({
+                notify = loop.create_task(state.events.publish({
                     "type": "sim_finished",
                     "data": {
                         "run_id": payload.run_id,
@@ -99,6 +103,8 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
                     },
                     "sequence_id": state.events.next_sequence_id(),
                 }))
+                notify_tasks.add(notify)
+                notify.add_done_callback(notify_tasks.discard)
         sim_task.add_done_callback(_on_finish)
 
     await state.events.publish({
