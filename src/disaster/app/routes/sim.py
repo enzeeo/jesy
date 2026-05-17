@@ -101,6 +101,7 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
     road_access = await state.road_access.set(_initial_road_access(payload.road_access_source))
     await _publish_road_access_updated(state, road_access)
     effective_seed = _effective_seed(payload.seed)
+    state.active_sim_run_id = payload.run_id
     await sim.start(
         count=payload.count,
         run_id=payload.run_id,
@@ -147,6 +148,7 @@ async def stop_sim(request: Request) -> dict[str, Any]:
     await sim.stop()
     await _drain_snowflake(state)
     await _cancel_road_block_updates(state)
+    state.active_sim_run_id = None
     snap = sim.snapshot()
     if state.snowflake is not None:
         snap["snowflake"] = state.snowflake.metrics.snapshot()

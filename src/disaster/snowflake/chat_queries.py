@@ -49,15 +49,29 @@ def build_chat_query_plan(
     incident_id: str | None = None,
     sector: str | None = None,
     cluster_id: str | None = None,
+    sim_run_id: str | None = None,
     message: str | None = None,
 ) -> list[ChatQuerySpec]:
-    """Select read-only queries for the current chat context."""
+    """Select read-only queries for the current chat context.
+
+    When sim_run_id is provided, queries on CLEAN.INCIDENTS scope to that
+    run so chat numbers track the live demo instead of accumulated test
+    data from prior sim runs. Pass None to query across all runs (the
+    historical behavior) — useful when no sim is active or for ad-hoc
+    cross-run analysis.
+    """
     incidents = _t(SCHEMA_CLEAN, "INCIDENTS")
     victims = _t(SCHEMA_CLEAN, "VICTIMS")
     dispatches = _t(SCHEMA_SERVING, "RESPONDER_DISPATCHES")
     alerts = _t(SCHEMA_SERVING, "CORTEX_ALERTS")
     resource_gap = _t(SCHEMA_FEATURES, "RESOURCE_GAP")
     clusters = _t(SCHEMA_CLEAN, "CLUSTERS")
+
+    # SIM_RUN_ID lives on CLEAN.INCIDENTS only. For queries on that table,
+    # append the filter directly; for joined queries, filter via the joined
+    # incidents alias.
+    sim_filter_incidents = " AND SIM_RUN_ID = %s" if sim_run_id else ""
+    sim_filter_i_alias = " AND i.SIM_RUN_ID = %s" if sim_run_id else ""
 
     plan: list[ChatQuerySpec] = [
         ChatQuerySpec(
@@ -68,6 +82,7 @@ def build_chat_query_plan(
                 FROM {incidents}
                 WHERE STATUS IN ('new', 'dispatched', 'en_route', 'partial')
                   AND TIMESTAMP > DATEADD(hour, -6, CURRENT_TIMESTAMP())
+                  {sim_filter_incidents}
                 GROUP BY SEVERITY
                 ORDER BY N DESC
             """,
@@ -80,6 +95,7 @@ def build_chat_query_plan(
                        INCIDENT_DESCRIPTION, TIMESTAMP
                 FROM {incidents}
                 WHERE TIMESTAMP > DATEADD(hour, -2, CURRENT_TIMESTAMP())
+                  {sim_filter_incidents}
                 ORDER BY PRIORITY_SCORE DESC
                 LIMIT 15
             """,
@@ -93,6 +109,7 @@ def build_chat_query_plan(
                 FROM {dispatches} d
                 LEFT JOIN {incidents} i ON d.INCIDENT_ID = i.INCIDENT_ID
                 WHERE d.STARTED_AT > DATEADD(hour, -6, CURRENT_TIMESTAMP())
+                  {sim_filter_i_alias}
                 ORDER BY d.STARTED_AT DESC
                 LIMIT 20
             """,
@@ -148,6 +165,7 @@ def build_chat_query_plan(
                 WHERE {_sector_case()} = %s
                   AND STATUS IN ('new', 'dispatched', 'en_route', 'partial')
                   AND TIMESTAMP > DATEADD(hour, -6, CURRENT_TIMESTAMP())
+                  {sim_filter_incidents}
                 ORDER BY PRIORITY_SCORE DESC
                 LIMIT 20
             """,
@@ -188,6 +206,7 @@ def build_chat_query_plan(
                   AND i.TIMESTAMP > DATEADD(hour, -6, CURRENT_TIMESTAMP())
                   {injury_filter}
                   {sector_filter}
+                  {sim_filter_i_alias}
             """,
         ))
 
@@ -195,13 +214,33 @@ def build_chat_query_plan(
 
 
 def query_params(spec: ChatQuerySpec, *, incident_id: str | None, sector: str | None,
-                 cluster_id: str | None) -> tuple[Any, ...]:
+                 cluster_id: str | None, sim_run_id: str | None = None) -> tuple[Any, ...]:
+    """Bind params for each spec. sim_run_id is appended only for queries
+    whose SQL was built with the SIM_RUN_ID filter — keep this aligned
+    with build_chat_query_plan's `sim_filter_*` insertion points.
+
+    Lookups by primary key (incident_detail, cluster_row) don't take the
+    filter — a specific row ID already narrows the result.
+    """
     if spec.query_id == "incident_detail":
         return (incident_id,)
-    if spec.query_id == "sector_open_incidents":
-        return (sector.strip().upper(),)
     if spec.query_id == "cluster_row":
         return (cluster_id,)
-    if spec.query_id == "head_injury_open_incidents" and sector:
-        return (sector.strip().upper(),)
+
+    if spec.query_id == "sector_open_incidents":
+        params: tuple[Any, ...] = (sector.strip().upper(),) if sector else ()
+        if sim_run_id:
+            params = params + (sim_run_id,)
+        return params
+    if spec.query_id == "head_injury_open_incidents":
+        params = (sector.strip().upper(),) if sector else ()
+        if sim_run_id:
+            params = params + (sim_run_id,)
+        return params
+
+    # open_incidents_by_severity, recent_incidents, active_dispatches:
+    # plan adds a sim filter when sim_run_id is set.
+    if spec.query_id in ("open_incidents_by_severity", "recent_incidents", "active_dispatches"):
+        return (sim_run_id,) if sim_run_id else ()
+
     return ()

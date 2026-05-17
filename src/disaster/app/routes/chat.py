@@ -67,21 +67,21 @@ def _session_to_dict(session) -> dict[str, Any]:
     }
 
 
-def _resolve_context(body: PostMessageBody | None, session) -> ChatContext:
-    ctx = ChatContext()
+def _resolve_context(body: PostMessageBody | None, session, *, sim_run_id: str | None) -> ChatContext:
     if body and body.context:
-        ctx = ChatContext(
+        return ChatContext(
             incident_id=body.context.incident_id,
             sector=body.context.sector,
             cluster_id=body.context.cluster_id,
+            sim_run_id=sim_run_id,
         )
-    elif session.scope == "incident" and session.scope_ref_id:
-        ctx = ChatContext(incident_id=session.scope_ref_id)
-    elif session.scope == "sector" and session.scope_ref_id:
-        ctx = ChatContext(sector=session.scope_ref_id)
-    elif session.scope == "cluster" and session.scope_ref_id:
-        ctx = ChatContext(cluster_id=session.scope_ref_id)
-    return ctx
+    if session.scope == "incident" and session.scope_ref_id:
+        return ChatContext(incident_id=session.scope_ref_id, sim_run_id=sim_run_id)
+    if session.scope == "sector" and session.scope_ref_id:
+        return ChatContext(sector=session.scope_ref_id, sim_run_id=sim_run_id)
+    if session.scope == "cluster" and session.scope_ref_id:
+        return ChatContext(cluster_id=session.scope_ref_id, sim_run_id=sim_run_id)
+    return ChatContext(sim_run_id=sim_run_id)
 
 
 @router.post("/sessions")
@@ -122,7 +122,8 @@ async def post_message(
         get_incidents=state.incidents.list,
         get_responders=state.responders.list,
     )
-    context = _resolve_context(body, session)
+    sim_run_id = getattr(state, "active_sim_run_id", None)
+    context = _resolve_context(body, session, sim_run_id=sim_run_id)
     history = [
         ChatTurn(role=m.role, content=m.content)
         for m in session.messages[:-1]

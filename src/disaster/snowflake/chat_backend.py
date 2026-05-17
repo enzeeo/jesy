@@ -42,6 +42,7 @@ class ChatContext:
     incident_id: str | None = None
     sector: str | None = None
     cluster_id: str | None = None
+    sim_run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +240,7 @@ class SqlGroundedCortexChatBackend:
             incident_id=context.incident_id,
             sector=context.sector,
             cluster_id=context.cluster_id,
+            sim_run_id=context.sim_run_id,
             message=message,
         )
         results: dict[str, list[dict[str, Any]]] = {}
@@ -250,6 +252,7 @@ class SqlGroundedCortexChatBackend:
                 incident_id=context.incident_id,
                 sector=context.sector,
                 cluster_id=context.cluster_id,
+                sim_run_id=context.sim_run_id,
             )
             try:
                 rows = await self._runner(spec.sql, params)
