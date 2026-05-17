@@ -87,13 +87,18 @@ async def voice_intake(payload: dict[str, Any], request: Request) -> IncidentRep
     persisted = await state.incidents.insert(scored, external_id=str(scored.id))
 
     if state.snowflake is not None:
-        state.snowflake.write("incidents", persisted.model_dump(mode="json"))
-        state.snowflake.write("voice_calls", {
-            "incident_id": str(persisted.id),
-            "transcript_length": len(transcript),
-            "model": state.llm_client.metrics.model,
-            "tokens": state.llm_client.metrics.total_tokens,
-        })
+        from disaster.snowflake import ingest
+        report = persisted.model_dump(mode="json")
+        ingest.emit_incident(state.snowflake, report)
+        ingest.emit_voice_call(
+            state.snowflake,
+            call_id=str(persisted.id),
+            incident_id=str(persisted.id),
+            transcript=transcript,
+            model=state.llm_client.metrics.model,
+            tokens=state.llm_client.metrics.total_tokens,
+            payload=report,
+        )
 
     await state.events.publish({
         "type": "incident_created",

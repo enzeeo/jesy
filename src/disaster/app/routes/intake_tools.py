@@ -181,7 +181,8 @@ async def create_incident_provisional(
     state.voice_conversations[body.conversation_id] = persisted.id
 
     if state.snowflake is not None:
-        state.snowflake.write("incidents", persisted.model_dump(mode="json"))
+        from disaster.snowflake import ingest
+        ingest.emit_incident(state.snowflake, persisted.model_dump(mode="json"))
 
     await state.events.publish({
         "type": "incident_created",
@@ -243,7 +244,8 @@ async def update_assessment(
     persisted = await state.incidents.update(scored)
 
     if state.snowflake is not None:
-        state.snowflake.write("incidents", persisted.model_dump(mode="json"))
+        from disaster.snowflake import ingest
+        ingest.emit_incident(state.snowflake, persisted.model_dump(mode="json"))
 
     if persisted.severity != prev_severity:
         await state.events.publish({
@@ -379,13 +381,18 @@ async def finalize(body: FinalizeBody, request: Request) -> IncidentReport:
         )
 
     if state.snowflake is not None:
-        state.snowflake.write("incidents", persisted.model_dump(mode="json"))
-        state.snowflake.write("voice_calls", {
-            "incident_id": str(persisted.id),
-            "transcript_length": len(body.transcript),
-            "model": state.llm_client.metrics.model,
-            "tokens": state.llm_client.metrics.total_tokens,
-        })
+        from disaster.snowflake import ingest
+        report = persisted.model_dump(mode="json")
+        ingest.emit_incident(state.snowflake, report)
+        ingest.emit_voice_call(
+            state.snowflake,
+            call_id=str(persisted.id),
+            incident_id=str(persisted.id),
+            transcript=body.transcript,
+            model=state.llm_client.metrics.model,
+            tokens=state.llm_client.metrics.total_tokens,
+            payload=report,
+        )
 
     await state.events.publish({
         "type": "incident_updated" if body.incident_id else "incident_created",

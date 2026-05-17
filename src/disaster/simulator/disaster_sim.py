@@ -218,8 +218,10 @@ class DisasterSimulator:
         self,
         *,
         on_incident: Callable[[IncidentReport, str], Awaitable[None]],
+        on_complete: Callable[[], Awaitable[None]] | None = None,
     ):
         self._on_incident = on_incident
+        self._on_complete = on_complete
         self._task: asyncio.Task[None] | None = None
         self._stopped = False
         self.events_emitted = 0
@@ -259,20 +261,27 @@ class DisasterSimulator:
         return self._task is not None and not self._task.done()
 
     async def _run(self, events: list[SimEvent]) -> None:
-        start = asyncio.get_running_loop().time()
-        for event in events:
-            if self._stopped:
-                return
-            target = start + event.delay_s
-            now = asyncio.get_running_loop().time()
-            await asyncio.sleep(max(0.0, target - now))
-            try:
-                await self._on_incident(event.incident, event.external_id)
-                self.events_emitted += 1
-            except Exception as e:  # noqa: BLE001 — caller-supplied handler may raise anything
-                self.events_dropped += 1
-                log.warning("simulator: on_incident failed external_id=%s err=%s",
-                            event.external_id, e)
+        try:
+            start = asyncio.get_running_loop().time()
+            for event in events:
+                if self._stopped:
+                    return
+                target = start + event.delay_s
+                now = asyncio.get_running_loop().time()
+                await asyncio.sleep(max(0.0, target - now))
+                try:
+                    await self._on_incident(event.incident, event.external_id)
+                    self.events_emitted += 1
+                except Exception as e:  # noqa: BLE001 — caller-supplied handler may raise anything
+                    self.events_dropped += 1
+                    log.warning("simulator: on_incident failed external_id=%s err=%s",
+                                event.external_id, e)
+        finally:
+            if self._on_complete is not None:
+                try:
+                    await self._on_complete()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("simulator: on_complete failed: %s", e)
 
     def snapshot(self) -> dict[str, Any]:
         return {

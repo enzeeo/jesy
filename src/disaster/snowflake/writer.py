@@ -67,8 +67,8 @@ class SnowflakeWriter:
         flush_fn: FlushFn,
         *,
         max_queue: int = 10_000,
-        batch_size: int = 50,
-        flush_interval_s: float = 5.0,
+        batch_size: int = 25,
+        flush_interval_s: float = 2.0,
         clock: Callable[[], float] = time.monotonic,
     ):
         self._flush_fn = flush_fn
@@ -79,6 +79,8 @@ class SnowflakeWriter:
         self.metrics = WriterMetrics()
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+        self._flush_now = asyncio.Event()
+        self._pending_batch_rows = 0
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -102,7 +104,28 @@ class SnowflakeWriter:
         self._stop_event.clear()
         self._task = asyncio.create_task(self._run(), name="snowflake-writer")
 
-    async def stop(self, drain_timeout_s: float = 5.0) -> None:
+    async def flush_pending(self, timeout_s: float = 120.0) -> WriterMetrics:
+        """
+        Block until the queue and in-memory batches are flushed to Snowflake.
+        Call after a simulation burst so incidents are not left buffered.
+        """
+        if self._task is None:
+            return self.metrics
+        deadline = self._clock() + timeout_s
+        while self._clock() < deadline:
+            self._flush_now.set()
+            if self._queue.qsize() == 0 and self._pending_batch_rows == 0:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            log.warning(
+                "snowflake_writer: flush_pending timed out queue=%d pending_batches=%d",
+                self._queue.qsize(),
+                self._pending_batch_rows,
+            )
+        return self.metrics
+
+    async def stop(self, drain_timeout_s: float = 30.0) -> None:
         """Signal shutdown, drain remaining items up to deadline, then cancel."""
         if self._task is None:
             return
@@ -119,18 +142,39 @@ class SnowflakeWriter:
 
     # ── Worker loop ──────────────────────────────────────────────────────────
 
+    def _sync_pending_count(self, pending: dict[str, list[dict[str, Any]]]) -> None:
+        self._pending_batch_rows = sum(len(rows) for rows in pending.values())
+
+    async def _flush_all_pending(self, pending: dict[str, list[dict[str, Any]]]) -> None:
+        for table, rows in list(pending.items()):
+            if rows:
+                await self._flush_one(table, rows)
+                pending[table] = []
+        self._sync_pending_count(pending)
+
     async def _run(self) -> None:
         """Pull items, batch per-table, flush on size or interval."""
         pending: dict[str, list[dict[str, Any]]] = defaultdict(list)
         last_flush = self._clock()
+        self._sync_pending_count(pending)
 
         try:
             while not (self._stop_event.is_set() and self._queue.empty() and not any(pending.values())):
+                if self._flush_now.is_set():
+                    await self._flush_all_pending(pending)
+                    self._flush_now.clear()
+                    last_flush = self._clock()
+
                 timeout = max(0.0, self._flush_interval_s - (self._clock() - last_flush))
+                if self._flush_now.is_set():
+                    timeout = 0.01
+                else:
+                    timeout = min(timeout, 0.25) if timeout else 0.25
                 try:
-                    table, row = await asyncio.wait_for(self._queue.get(), timeout=timeout or 0.01)
+                    table, row = await asyncio.wait_for(self._queue.get(), timeout=timeout)
                     pending[table].append(row)
                     self.metrics.queue_depth = self._queue.qsize()
+                    self._sync_pending_count(pending)
                 except TimeoutError:
                     pass
 
@@ -139,13 +183,11 @@ class SnowflakeWriter:
                     if len(pending[table]) >= self._batch_size:
                         await self._flush_one(table, pending[table])
                         pending[table] = []
+                        self._sync_pending_count(pending)
 
                 # Interval-based flush across all tables
                 if (self._clock() - last_flush) >= self._flush_interval_s:
-                    for table, rows in list(pending.items()):
-                        if rows:
-                            await self._flush_one(table, rows)
-                            pending[table] = []
+                    await self._flush_all_pending(pending)
                     last_flush = self._clock()
 
                 # If shutting down, drain remaining without further waiting
@@ -171,5 +213,4 @@ class SnowflakeWriter:
             self.metrics.last_flush_ts = self._clock()
         except SnowflakeWriteError as e:
             self.metrics.flush_errors += 1
-            # Sim writes are not authoritative for demo: drop the batch.
             log.error("snowflake_writer: flush failed for table=%s rows=%d err=%s", table, len(rows), e)

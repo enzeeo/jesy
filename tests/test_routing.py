@@ -575,8 +575,9 @@ async def test_optimize_then_start_first_leg_updates_state_and_writes_dispatch_o
         assert event["data"]["responder_id"] == str(responder.id)
 
         await writer.stop(0.5)
-        assert writer.metrics.enqueued == 1
-        assert len(collected["responder_dispatches"]) == 1
+        assert len(collected.get("SERVING.RESPONDER_DISPATCHES", [])) == 1
+        assert len(collected.get("CLEAN.DISPATCHES", [])) == 1
+        assert len(collected.get("RAW.RAW_DISPATCHES", [])) == 1
     finally:
         await writer.stop(0.5)
 

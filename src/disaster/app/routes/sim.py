@@ -30,6 +30,22 @@ def _state(req: Request) -> AppState:
     return req.app.state.disaster
 
 
+async def _drain_snowflake(state: AppState) -> None:
+    """Flush buffered sim writes so every incident reaches Snowflake."""
+    if state.snowflake is None:
+        return
+    metrics = await state.snowflake.flush_pending(timeout_s=120.0)
+    snap = metrics.snapshot()
+    if snap["dropped_count"] or snap["flush_errors"]:
+        log.warning("snowflake after sim: %s", snap)
+    else:
+        log.info(
+            "snowflake after sim: flushed=%d queue_depth=%d",
+            snap["flushed"],
+            snap["queue_depth"],
+        )
+
+
 def _get_or_create_sim(state) -> DisasterSimulator:
     sim = getattr(state, "_sim", None)
     if sim is None:
@@ -43,13 +59,21 @@ def _get_or_create_sim(state) -> DisasterSimulator:
                 scored = incident
             persisted = await state.incidents.insert(scored, external_id=external_id)
             if state.snowflake is not None:
-                state.snowflake.write("incidents", persisted.model_dump(mode="json"))
+                from disaster.snowflake import ingest
+                ingest.emit_incident(
+                    state.snowflake,
+                    persisted.model_dump(mode="json"),
+                    source_system="simulator",
+                )
             await state.events.publish({
                 "type": "incident_created",
                 "data": persisted.model_dump(mode="json"),
                 "sequence_id": state.events.next_sequence_id(),
             })
-        sim = DisasterSimulator(on_incident=on_incident)
+        sim = DisasterSimulator(
+            on_incident=on_incident,
+            on_complete=lambda: _drain_snowflake(state),
+        )
         state._sim = sim
     return sim
 
@@ -95,15 +119,22 @@ async def stop_sim(request: Request) -> dict[str, Any]:
     state = _state(request)
     sim = _get_or_create_sim(state)
     await sim.stop()
+    await _drain_snowflake(state)
     await _cancel_road_block_updates(state)
-    return {"status": "stopped", **sim.snapshot()}
+    snap = sim.snapshot()
+    if state.snowflake is not None:
+        snap["snowflake"] = state.snowflake.metrics.snapshot()
+    return {"status": "stopped", **snap}
 
 
 @router.get("/status")
 async def sim_status(request: Request) -> dict[str, Any]:
     state = _state(request)
     sim = _get_or_create_sim(state)
-    return sim.snapshot()
+    snap = sim.snapshot()
+    if state.snowflake is not None:
+        snap["snowflake"] = state.snowflake.metrics.snapshot()
+    return snap
 
 
 async def _publish_road_access_updated(state: AppState, road_access: dict[str, Any]) -> None:

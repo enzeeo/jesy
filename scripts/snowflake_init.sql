@@ -1,88 +1,486 @@
--- Snowflake schema for Hilo Dispatch (hackathon).
+-- DISASTER_DB layered schema (Hilo Dispatch).
 -- Idempotent: safe to run repeatedly.
 --
--- Run via:
---   snowsql -a <account> -u <user> -d <db> -s <schema> -w <warehouse> -f scripts/snowflake_init.sql
--- or:
 --   uv run python scripts/snowflake_smoke.py --init
 --
--- Column types match what _row_to_columns in src/disaster/snowflake/connection.py
--- emits. If you change one, change both.
+-- Column names match src/disaster/snowflake/tables.py (TABLE_COLUMNS).
 
 CREATE DATABASE IF NOT EXISTS DISASTER_DB;
-CREATE SCHEMA IF NOT EXISTS DISASTER_DB.OPERATIONAL;
+
+CREATE SCHEMA IF NOT EXISTS DISASTER_DB.RAW;
+CREATE SCHEMA IF NOT EXISTS DISASTER_DB.CLEAN;
+CREATE SCHEMA IF NOT EXISTS DISASTER_DB.GEO;
+CREATE SCHEMA IF NOT EXISTS DISASTER_DB.FEATURES;
+CREATE SCHEMA IF NOT EXISTS DISASTER_DB.SERVING;
+CREATE SCHEMA IF NOT EXISTS DISASTER_DB.AGENT;
 
 USE DATABASE DISASTER_DB;
-USE SCHEMA OPERATIONAL;
 
--- ── incidents ────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS incidents (
-    id                    VARCHAR(36)   NOT NULL,    -- IncidentReport.id (UUID)
-    timestamp             TIMESTAMP_TZ  NOT NULL,
-    source                VARCHAR(20)   NOT NULL,    -- voice | simulated | manual
-    status                VARCHAR(20)   NOT NULL,    -- new | dispatched | en_route | on_scene | resolved | partial
-    lat                   FLOAT         NOT NULL,
-    lng                   FLOAT         NOT NULL,
-    location_description  VARCHAR(500)  NOT NULL,
-    severity              VARCHAR(20)   NOT NULL,    -- Immediate | Delayed | Minor | Deceased
-    priority_score        FLOAT         NOT NULL,
-    victim_count          NUMBER        NOT NULL,
-    vulnerabilities       VARCHAR(500),              -- comma-joined from victim flags
-    confidence            FLOAT         NOT NULL,
-    sim_run_id            VARCHAR(64),
-    -- Append-only fact table. Multiple rows per incident_id are expected
-    -- (one per state mutation). Latest-row semantics via QUALIFY ROW_NUMBER.
-    _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
+-- ═══════════════════════════════════════════════════════════════════════════
+-- RAW
+-- ═══════════════════════════════════════════════════════════════════════════
+USE SCHEMA RAW;
+
+CREATE TABLE IF NOT EXISTS RAW_INCIDENT_SUBMISSIONS (
+    RAW_ID              VARCHAR(36)     NOT NULL,
+    SUBMISSION_ID       VARCHAR(64)     NOT NULL,
+    SOURCE              VARCHAR(32)     NOT NULL,
+    RECEIVED_AT         TIMESTAMP_TZ    NOT NULL,
+    PAYLOAD             VARIANT         NOT NULL,
+    _SOURCE_SYSTEM      VARCHAR(64)     DEFAULT 'hilo_dispatch',
+    _INGESTED_AT        TIMESTAMP_TZ    DEFAULT CURRENT_TIMESTAMP()
 );
 
-CREATE INDEX IF NOT EXISTS idx_incidents_ts ON incidents(timestamp);
-CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
-
--- ── voice_calls ──────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS voice_calls (
-    incident_id           VARCHAR(36)   NOT NULL,
-    transcript_length     NUMBER        NOT NULL,
-    model                 VARCHAR(64)   NOT NULL,
-    tokens                NUMBER        NOT NULL,
-    _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
+CREATE TABLE IF NOT EXISTS RAW_VOICE_CALLS (
+    RAW_ID              VARCHAR(36)     NOT NULL,
+    CALL_ID             VARCHAR(64)     NOT NULL,
+    TRANSCRIPT          VARCHAR(16777216),
+    TRANSCRIPT_TOKENS   NUMBER,
+    MODEL               VARCHAR(64),
+    RECEIVED_AT         TIMESTAMP_TZ    NOT NULL,
+    PAYLOAD             VARIANT,
+    _SOURCE_SYSTEM      VARCHAR(64)     DEFAULT 'hilo_dispatch',
+    _INGESTED_AT        TIMESTAMP_TZ    DEFAULT CURRENT_TIMESTAMP()
 );
 
--- ── responder_dispatches ─────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS responder_dispatches (
-    responder_id          VARCHAR(36)   NOT NULL,
-    incident_id           VARCHAR(36)   NOT NULL,
-    dispatched_at         TIMESTAMP_TZ  NOT NULL,
-    distance_km           FLOAT         NOT NULL,
-    eta_seconds           FLOAT         NOT NULL,
-    solver                VARCHAR(40)   NOT NULL,    -- greedy | vrp | weighted_flow
-    _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
+CREATE TABLE IF NOT EXISTS RAW_DISPATCHES (
+    RAW_ID              VARCHAR(36)     NOT NULL,
+    RESPONDER_ID        VARCHAR(36)     NOT NULL,
+    INCIDENT_ID         VARCHAR(36)     NOT NULL,
+    DISPATCHED_AT       TIMESTAMP_TZ    NOT NULL,
+    DISTANCE_KM         FLOAT,
+    ETA_SECONDS         FLOAT,
+    SOLVER              VARCHAR(40),
+    PAYLOAD             VARIANT,
+    _SOURCE_SYSTEM      VARCHAR(64)     DEFAULT 'hilo_dispatch',
+    _INGESTED_AT        TIMESTAMP_TZ    DEFAULT CURRENT_TIMESTAMP()
 );
 
--- ── responder_arrivals ──────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS responder_arrivals (
-    responder_id          VARCHAR(36)   NOT NULL,
-    callsign              VARCHAR(40)   NOT NULL,
-    incident_id           VARCHAR(36)   NOT NULL,
-    cluster_id            VARCHAR(120),
-    arrival_timestamp     TIMESTAMP_TZ  NOT NULL,
-    ping_lat              FLOAT         NOT NULL,
-    ping_lng              FLOAT         NOT NULL,
-    accuracy_m            FLOAT         NOT NULL,
-    route_id              VARCHAR(120),
-    assignment_id         VARCHAR(120),
-    detection_method      VARCHAR(80)   NOT NULL,
-    distance_m            FLOAT         NOT NULL,
-    _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
+CREATE TABLE IF NOT EXISTS RAW_RESPONDER_STATUS (
+    RAW_ID              VARCHAR(36)     NOT NULL,
+    RESPONDER_ID        VARCHAR(36)     NOT NULL,
+    REPORTED_AT         TIMESTAMP_TZ    NOT NULL,
+    LAT                 FLOAT           NOT NULL,
+    LNG                 FLOAT           NOT NULL,
+    STATUS              VARCHAR(32)     NOT NULL,
+    PAYLOAD             VARIANT,
+    _INGESTED_AT        TIMESTAMP_TZ    DEFAULT CURRENT_TIMESTAMP()
 );
 
--- ── cortex_alerts ────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS cortex_alerts (
-    alert_type            VARCHAR(40)   NOT NULL,    -- cluster | anomaly | gap
-    severity              VARCHAR(40)   NOT NULL,    -- info | warning | critical
-    message               VARCHAR(500)  NOT NULL,
-    detected_at           TIMESTAMP_TZ  NOT NULL,
-    _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
+CREATE TABLE IF NOT EXISTS RAW_FEEDBACK (
+    RAW_ID              VARCHAR(36)     NOT NULL,
+    RECOMMENDATION_ID   VARCHAR(64),
+    INCIDENT_ID         VARCHAR(36),
+    RESPONDER_ID        VARCHAR(36),
+    ACTION              VARCHAR(32)     NOT NULL,
+    REASON              VARCHAR(500),
+    OVERRIDE_PAYLOAD    VARIANT,
+    DECIDED_AT          TIMESTAMP_TZ    NOT NULL,
+    _INGESTED_AT        TIMESTAMP_TZ    DEFAULT CURRENT_TIMESTAMP()
 );
 
--- ── Verify ───────────────────────────────────────────────────────────────────
-SHOW TABLES IN SCHEMA DISASTER_DB.OPERATIONAL;
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CLEAN
+-- ═══════════════════════════════════════════════════════════════════════════
+USE SCHEMA CLEAN;
+
+CREATE TABLE IF NOT EXISTS INCIDENTS (
+    INCIDENT_ID          VARCHAR(36)     NOT NULL,
+    SUBMISSION_ID        VARCHAR(64)     NOT NULL,
+    TIMESTAMP            TIMESTAMP_TZ    NOT NULL,
+    LAT                  FLOAT           NOT NULL,
+    LNG                  FLOAT           NOT NULL,
+    PRIORITY_SCORE       FLOAT           NOT NULL,
+    STATUS               VARCHAR(32)     NOT NULL,
+    USER_ID              VARCHAR(64),
+    SEVERITY             VARCHAR(20)     NOT NULL,
+    SOURCE               VARCHAR(32)     NOT NULL,
+    LOCATION_DESCRIPTION VARCHAR(500)    NOT NULL,
+    VICTIM_COUNT         NUMBER          NOT NULL,
+    CONFIDENCE           FLOAT           NOT NULL,
+    SIM_RUN_ID           VARCHAR(64),
+    FIRST_REPORTED_AT    TIMESTAMP_TZ    NOT NULL,
+    LAST_UPDATED_AT      TIMESTAMP_TZ    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS VICTIMS (
+    INCIDENT_ID         VARCHAR(36)     NOT NULL,
+    VICTIM_ORDINAL      NUMBER          NOT NULL,
+    AGE_BAND            VARCHAR(32),
+    VULNERABILITIES     ARRAY,
+    INJURIES            ARRAY,
+    CONSCIOUSNESS       VARCHAR(32),
+    EXTRACTED_AT        TIMESTAMP_TZ    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS DISPATCHES (
+    DISPATCH_ID         VARCHAR(36)     NOT NULL,
+    RESPONDER_ID        VARCHAR(36)     NOT NULL,
+    INCIDENT_ID         VARCHAR(36)     NOT NULL,
+    DISPATCHED_AT       TIMESTAMP_TZ    NOT NULL,
+    DISTANCE_KM         FLOAT,
+    ETA_SECONDS         FLOAT,
+    SOLVER              VARCHAR(40),
+    DECIDED_BY          VARCHAR(64)
+);
+
+CREATE TABLE IF NOT EXISTS RESPONDERS (
+    RESPONDER_ID        VARCHAR(36)     NOT NULL,
+    CALLSIGN            VARCHAR(40)     NOT NULL,
+    RESPONDER_TYPE      VARCHAR(32)     NOT NULL,
+    STATUS              VARCHAR(32)     NOT NULL,
+    LAT                 FLOAT           NOT NULL,
+    LNG                 FLOAT           NOT NULL,
+    LOCATION_DESCRIPTION VARCHAR(500),
+    CAPABILITIES        VARCHAR(1000),
+    ASSIGNED_INCIDENT_ID VARCHAR(36),
+    UPDATED_AT          TIMESTAMP_TZ    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS CLUSTERS (
+    CLUSTER_ID          VARCHAR(64)     NOT NULL,
+    LAT                 FLOAT           NOT NULL,
+    LNG                 FLOAT           NOT NULL,
+    LOCATION_DESCRIPTION VARCHAR(500),
+    PRIORITY_SCORE      FLOAT,
+    DEMAND_COUNT        NUMBER,
+    REQUIRED_CAPABILITIES VARCHAR(1000),
+    PREFERRED_CAPABILITIES VARCHAR(1000),
+    MEMBER_INCIDENT_IDS VARIANT,
+    SOURCE              VARCHAR(32),
+    CLUSTER_METHOD      VARCHAR(64),
+    WINDOW_START        TIMESTAMP_TZ,
+    WINDOW_END          TIMESTAMP_TZ,
+    CREATED_AT          TIMESTAMP_TZ    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ROAD_ACCESS_SNAPSHOTS (
+    ROAD_ACCESS_ID      VARCHAR(64)     NOT NULL,
+    SOURCE              VARCHAR(64),
+    VERSION             VARCHAR(32),
+    LOADED_AT           TIMESTAMP_TZ    NOT NULL,
+    FEATURE_COLLECTION  VARIANT,
+    FEATURE_COUNT       NUMBER,
+    HARD_AVOID_COUNT    NUMBER,
+    SOFT_PENALTY_COUNT  NUMBER,
+    STATUS_COUNTS       VARIANT,
+    PROVIDER            VARCHAR(64),
+    AVOIDANCE_STRATEGY  VARCHAR(64)
+);
+
+CREATE TABLE IF NOT EXISTS ROAD_ACCESS_FEATURES (
+    FEATURE_ID          VARCHAR(64)     NOT NULL,
+    ROAD_ACCESS_ID      VARCHAR(64)     NOT NULL,
+    LABEL               VARCHAR(256),
+    ROAD_STATUS         VARCHAR(32),
+    CONFIDENCE          FLOAT,
+    GEOMETRY_TYPE       VARCHAR(32),
+    GEOMETRY            VARIANT,
+    PROPERTIES          VARIANT,
+    CREATED_AT          TIMESTAMP_TZ    NOT NULL
+);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- GEO
+-- ═══════════════════════════════════════════════════════════════════════════
+USE SCHEMA GEO;
+
+CREATE TABLE IF NOT EXISTS H3_INDEX (
+    INCIDENT_ID         VARCHAR(36)     NOT NULL,
+    LAT                 FLOAT           NOT NULL,
+    LNG                 FLOAT           NOT NULL,
+    H3_RES7             VARCHAR(32),
+    H3_RES8             VARCHAR(32),
+    H3_RES9             VARCHAR(32),
+    INDEXED_AT          TIMESTAMP_TZ    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS SECTORS (
+    SECTOR_ID           VARCHAR(64)     NOT NULL,
+    NAME                VARCHAR(128)    NOT NULL,
+    POLYGON             VARIANT,
+    CENTROID_LAT        FLOAT,
+    CENTROID_LNG        FLOAT
+);
+
+CREATE TABLE IF NOT EXISTS ROUTE_COVERAGE (
+    RESPONDER_ID        VARCHAR(36)     NOT NULL,
+    INCIDENT_ID         VARCHAR(36)     NOT NULL,
+    ROUTE_GEOM          VARIANT,
+    STARTED_AT          TIMESTAMP_TZ,
+    ENDED_AT            TIMESTAMP_TZ,
+    DISTANCE_KM         FLOAT,
+    H3_CELLS_RES8       VARIANT
+);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- FEATURES (populated by Snowflake tasks / dynamic tables in production)
+-- ═══════════════════════════════════════════════════════════════════════════
+USE SCHEMA FEATURES;
+
+CREATE TABLE IF NOT EXISTS INCIDENT_MINUTE_COUNTS (
+    MINUTE              TIMESTAMP_TZ    NOT NULL,
+    SEVERITY            VARCHAR(20)     NOT NULL,
+    SECTOR_ID           VARCHAR(64),
+    N                   NUMBER          NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS SEVERITY_RATE_5MIN (
+    BUCKET_END          TIMESTAMP_TZ    NOT NULL,
+    SECTOR_ID           VARCHAR(64),
+    TOTAL_N             NUMBER,
+    IMMEDIATE_N         NUMBER,
+    IMMEDIATE_RATE      FLOAT
+);
+
+CREATE TABLE IF NOT EXISTS RESOURCE_GAP (
+    COMPUTED_AT         TIMESTAMP_TZ    NOT NULL,
+    SECTOR_ID           VARCHAR(64),
+    OPEN_IMMEDIATE      NUMBER,
+    OPEN_DELAYED        NUMBER,
+    AVAILABLE_RESPONDERS NUMBER,
+    GAP_SCORE           FLOAT
+);
+
+CREATE TABLE IF NOT EXISTS FEEDBACK_FEATURES (
+    RECOMMENDATION_ID   VARCHAR(64),
+    INCIDENT_ID         VARCHAR(36),
+    SEVERITY            VARCHAR(20),
+    PRIORITY_SCORE      FLOAT,
+    PROPOSED_RESPONDER  VARCHAR(36),
+    PROPOSED_ETA_S      FLOAT,
+    SECTOR_ID           VARCHAR(64),
+    GAP_SCORE_AT_DECISION FLOAT,
+    LABEL               VARCHAR(32),
+    DECIDED_AT          TIMESTAMP_TZ
+);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SERVING
+-- ═══════════════════════════════════════════════════════════════════════════
+USE SCHEMA SERVING;
+
+CREATE TABLE IF NOT EXISTS DISPATCH_RECOMMENDATIONS (
+    RECOMMENDATION_ID   VARCHAR(64)     NOT NULL,
+    INCIDENT_ID         VARCHAR(36)     NOT NULL,
+    PROPOSED_RESPONDER  VARCHAR(36),
+    PROPOSED_ETA_S      FLOAT,
+    DISTANCE_KM         FLOAT,
+    RATIONALE           VARCHAR(2000),
+    ALTERNATIVES        VARIANT,
+    STATUS              VARCHAR(32),
+    CREATED_AT          TIMESTAMP_TZ    NOT NULL,
+    EXPIRES_AT          TIMESTAMP_TZ
+);
+
+CREATE TABLE IF NOT EXISTS CORTEX_ALERTS (
+    ALERT_ID            VARCHAR(36)     NOT NULL,
+    ALERT_TYPE          VARCHAR(40)     NOT NULL,
+    SEVERITY            VARCHAR(40)     NOT NULL,
+    SECTOR_ID           VARCHAR(64),
+    PAYLOAD             VARIANT,
+    MESSAGE             VARCHAR(500)    NOT NULL,
+    DETECTED_AT         TIMESTAMP_TZ    NOT NULL,
+    ACKNOWLEDGED_AT     TIMESTAMP_TZ,
+    ACKNOWLEDGED_BY     VARCHAR(64)
+);
+
+CREATE TABLE IF NOT EXISTS ROUTING_INPUTS (
+    ROUTING_INPUT_ID    VARCHAR(64)     NOT NULL,
+    CREATED_AT          TIMESTAMP_TZ    NOT NULL,
+    RESPONDERS          VARIANT,
+    INCIDENTS           VARIANT,
+    CLUSTERS            VARIANT,
+    ROAD_ACCESS         VARIANT,
+    ACCEPTED_ASSIGNMENTS VARIANT,
+    ROUTE_STOP_LIMIT    NUMBER,
+    MAX_CANDIDATES      NUMBER
+);
+
+CREATE TABLE IF NOT EXISTS ROUTE_RECOMMENDATIONS (
+    ROUTE_ID            VARCHAR(64)     NOT NULL,
+    SOLVER              VARCHAR(40)     NOT NULL,
+    CREATED_AT          TIMESTAMP_TZ    NOT NULL,
+    ELAPSED_MS          NUMBER,
+    INPUT_INCIDENT_IDS  VARIANT,
+    INPUT_CLUSTER_IDS   VARIANT,
+    INPUT_RESPONDER_IDS VARIANT,
+    ACCEPTED_ASSIGNMENTS VARIANT,
+    ROUTE_STOP_LIMIT    NUMBER,
+    MAX_CANDIDATES      NUMBER,
+    ROAD_ACCESS_ID      VARCHAR(64),
+    ROAD_ACCESS_SUMMARY VARIANT,
+    UNASSIGNED          VARIANT,
+    PAYLOAD             VARIANT
+);
+
+CREATE TABLE IF NOT EXISTS ROUTE_LEGS (
+    ROUTE_ID            VARCHAR(64)     NOT NULL,
+    LEG_ID              VARCHAR(128)    NOT NULL,
+    SEQUENCE_INDEX      NUMBER          NOT NULL,
+    RESPONDER_ID        VARCHAR(36)     NOT NULL,
+    INCIDENT_ID         VARCHAR(36),
+    TARGET_ID           VARCHAR(64),
+    TARGET_TYPE         VARCHAR(32),
+    FROM_LAT            FLOAT,
+    FROM_LNG            FLOAT,
+    FROM_LOCATION_DESCRIPTION VARCHAR(500),
+    TO_LAT              FLOAT,
+    TO_LNG              FLOAT,
+    TO_LOCATION_DESCRIPTION VARCHAR(500),
+    DISTANCE_KM         FLOAT,
+    ETA_SECONDS         FLOAT,
+    ARRIVAL_SECONDS     FLOAT,
+    MEMBER_INCIDENT_IDS VARIANT,
+    ROUTE_GEOMETRY      VARIANT,
+    DEGRADED            BOOLEAN,
+    PROVIDER_STATUS     VARCHAR(64),
+    WARNINGS            VARIANT,
+    ASSIGNMENT_REASON   VARCHAR(500),
+    CREATED_AT          TIMESTAMP_TZ    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS RESPONDER_DISPATCHES (
+    DISPATCH_ID         VARCHAR(36)     NOT NULL,
+    ROUTE_ID            VARCHAR(64),
+    LEG_ID              VARCHAR(128),
+    RESPONDER_ID        VARCHAR(36)     NOT NULL,
+    INCIDENT_ID         VARCHAR(36)     NOT NULL,
+    STARTED_BY          VARCHAR(64),
+    STARTED_AT          TIMESTAMP_TZ    NOT NULL,
+    SOLVER              VARCHAR(40),
+    DISTANCE_KM         FLOAT,
+    ETA_SECONDS         FLOAT,
+    LEG                 VARIANT,
+    STATUS              VARCHAR(32)
+);
+
+CREATE TABLE IF NOT EXISTS RESPONDER_ARRIVALS (
+    ASSIGNMENT_ID       VARCHAR(64)     NOT NULL,
+    RESPONDER_ID        VARCHAR(36)     NOT NULL,
+    CALLSIGN            VARCHAR(40)     NOT NULL,
+    INCIDENT_ID         VARCHAR(36)     NOT NULL,
+    CLUSTER_ID          VARCHAR(120),
+    ARRIVAL_TIMESTAMP   TIMESTAMP_TZ    NOT NULL,
+    PING_LAT            FLOAT           NOT NULL,
+    PING_LNG            FLOAT           NOT NULL,
+    ACCURACY_M          FLOAT,
+    ROUTE_ID            VARCHAR(64),
+    DETECTION_METHOD    VARCHAR(80)     NOT NULL,
+    DISTANCE_M          FLOAT
+);
+
+CREATE TABLE IF NOT EXISTS RESPONDER_LOCATION_PINGS (
+    PING_ID             VARCHAR(36)     NOT NULL,
+    RESPONDER_ID        VARCHAR(36)     NOT NULL,
+    LAT                 FLOAT           NOT NULL,
+    LNG                 FLOAT           NOT NULL,
+    ACCURACY_M          FLOAT,
+    TIMESTAMP           TIMESTAMP_TZ    NOT NULL,
+    SPEED_MPS           FLOAT,
+    HEADING             FLOAT,
+    ASSIGNED_INCIDENT_ID VARCHAR(36),
+    ROUTE_ID            VARCHAR(64),
+    LEG_ID              VARCHAR(128)
+);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- AGENT (command center / enrichment — DDL ready for future features)
+-- ═══════════════════════════════════════════════════════════════════════════
+USE SCHEMA AGENT;
+
+CREATE TABLE IF NOT EXISTS CHAT_SESSIONS (
+    SESSION_ID          VARCHAR(64)     NOT NULL,
+    SCOPE               VARCHAR(32),
+    SCOPE_REF_ID        VARCHAR(64),
+    OPENED_BY           VARCHAR(64),
+    OPENED_AT           TIMESTAMP_TZ    NOT NULL,
+    CLOSED_AT           TIMESTAMP_TZ,
+    TITLE               VARCHAR(256)
+);
+
+CREATE TABLE IF NOT EXISTS CHAT_MESSAGES (
+    MESSAGE_ID          VARCHAR(64)     NOT NULL,
+    SESSION_ID          VARCHAR(64)     NOT NULL,
+    SEQ                 NUMBER          NOT NULL,
+    ROLE                VARCHAR(32)     NOT NULL,
+    AGENT_NAME          VARCHAR(64),
+    CONTENT             VARCHAR(16777216),
+    TOOL_CALLS          VARIANT,
+    CITATIONS           VARIANT,
+    TOKENS              NUMBER,
+    CREATED_AT          TIMESTAMP_TZ    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ENRICHED_INCIDENT_REPORTS (
+    INCIDENT_ID         VARCHAR(36)     NOT NULL,
+    ENRICHED_TEXT       VARCHAR(16777216),
+    SEVERITY            VARCHAR(20),
+    SECTOR_ID           VARCHAR(64),
+    STATUS              VARCHAR(32),
+    VICTIM_COUNT        NUMBER,
+    H3_RES8             VARCHAR(32),
+    TIMESTAMP           TIMESTAMP_TZ,
+    EMBEDDING_MODEL     VARCHAR(64),
+    UPDATED_AT          TIMESTAMP_TZ    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS DISPATCH_DECISIONS (
+    DECISION_ID         VARCHAR(64)     NOT NULL,
+    RECOMMENDATION_ID   VARCHAR(64),
+    INCIDENT_ID         VARCHAR(36),
+    RESPONDER_USER_ID   VARCHAR(64),
+    ACTION              VARCHAR(32)     NOT NULL,
+    REASON              VARCHAR(500),
+    OVERRIDE_PAYLOAD    VARIANT,
+    DECIDED_AT          TIMESTAMP_TZ    NOT NULL,
+    SESSION_ID          VARCHAR(64)
+);
+
+CREATE TABLE IF NOT EXISTS FEEDBACK_LABELS (
+    LABEL_ID            VARCHAR(64)     NOT NULL,
+    INCIDENT_ID         VARCHAR(36),
+    RECOMMENDATION_ID   VARCHAR(64),
+    LABEL_TYPE          VARCHAR(32),
+    LABEL_VALUE         VARCHAR(64),
+    NOTES               VARCHAR(2000),
+    LABELED_BY          VARCHAR(64),
+    LABELED_AT          TIMESTAMP_TZ    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS AGENT_RUNS (
+    RUN_ID              VARCHAR(64)     NOT NULL,
+    AGENT_NAME          VARCHAR(64)     NOT NULL,
+    SESSION_ID          VARCHAR(64),
+    INCIDENT_ID         VARCHAR(36),
+    INPUT_PAYLOAD       VARIANT,
+    OUTPUT_PAYLOAD      VARIANT,
+    TOOL_CALLS          VARIANT,
+    CORTEX_SEARCH_HITS  VARIANT,
+    STARTED_AT          TIMESTAMP_TZ    NOT NULL,
+    ENDED_AT            TIMESTAMP_TZ,
+    LATENCY_MS          NUMBER,
+    COST_USD            FLOAT,
+    ERROR               VARCHAR(2000)
+);
+
+-- ── Migrate existing CLEAN.INCIDENTS (CREATE IF NOT EXISTS does not add columns) ──
+USE SCHEMA CLEAN;
+ALTER TABLE INCIDENTS ADD COLUMN IF NOT EXISTS SUBMISSION_ID VARCHAR(64);
+ALTER TABLE INCIDENTS ADD COLUMN IF NOT EXISTS SEVERITY VARCHAR(20);
+ALTER TABLE INCIDENTS ADD COLUMN IF NOT EXISTS SOURCE VARCHAR(32);
+ALTER TABLE INCIDENTS ADD COLUMN IF NOT EXISTS LOCATION_DESCRIPTION VARCHAR(500);
+ALTER TABLE INCIDENTS ADD COLUMN IF NOT EXISTS VICTIM_COUNT NUMBER;
+ALTER TABLE INCIDENTS ADD COLUMN IF NOT EXISTS CONFIDENCE FLOAT;
+ALTER TABLE INCIDENTS ADD COLUMN IF NOT EXISTS SIM_RUN_ID VARCHAR(64);
+ALTER TABLE INCIDENTS ADD COLUMN IF NOT EXISTS FIRST_REPORTED_AT TIMESTAMP_TZ;
+ALTER TABLE INCIDENTS ADD COLUMN IF NOT EXISTS LAST_UPDATED_AT TIMESTAMP_TZ;
+
+-- Align VICTIMS array columns if an older VARCHAR definition exists (no-op if already ARRAY).
+-- If migration fails, recreate VICTIMS from the CREATE TABLE above in Snowsight.
+
+-- Verify
+SHOW SCHEMAS IN DATABASE DISASTER_DB;
+SHOW TABLES IN SCHEMA DISASTER_DB.RAW;
+SHOW TABLES IN SCHEMA DISASTER_DB.CLEAN;
+SHOW TABLES IN SCHEMA DISASTER_DB.SERVING;

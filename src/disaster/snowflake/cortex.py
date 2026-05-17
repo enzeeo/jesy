@@ -2,65 +2,65 @@
 Cortex pattern detection.
 
 Two modes:
-  (1) Snowflake-backed (CORTEX_CLUSTER_SQL): groups recent incidents by injury
-      bucket + geographic sector, returns clusters above threshold.
-  (2) In-memory (detect_clusters): pure Python fallback used when no Snowflake
-      runner is configured, or when the SQL path fails.
-
-Both produce identical alert dict shapes so /cortex/scan can swap between them
-transparently.
+  (1) Snowflake-backed (CORTEX_CLUSTER_SQL): groups recent CLEAN incidents + victims.
+  (2) In-memory (detect_clusters): pure Python fallback.
 """
 from __future__ import annotations
 
 import logging
+import os
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from disaster.models import IncidentReport
+from disaster.snowflake.tables import SCHEMA_CLEAN
 
 log = logging.getLogger(__name__)
 
 
-# ── Snowflake path ───────────────────────────────────────────────────────────
-# Real-Snowflake cluster query. Avoids Cortex DETECT_ANOMALIES because that
-# requires a pre-trained ML model (CREATE SNOWFLAKE.ML.ANOMALY_DETECTION) and
-# training data we don't have at hackathon scale. Instead this groups recent
-# incidents by injury-bucket-derived-from-vulnerabilities-and-status + sector
-# and returns clusters above the min_cluster threshold.
-#
-# The output columns must match what _row_to_alert expects below.
-CORTEX_CLUSTER_SQL = """
+def _db() -> str:
+    return os.environ.get("SNOWFLAKE_DATABASE", "DISASTER_DB")
+
+
+def _cortex_cluster_sql() -> str:
+    incidents = f"{_db()}.{SCHEMA_CLEAN}.INCIDENTS"
+    victims = f"{_db()}.{SCHEMA_CLEAN}.VICTIMS"
+    return f"""
 WITH recent AS (
     SELECT
+        i.INCIDENT_ID,
         CASE
-            WHEN lat > 29.31 THEN 'NORTH'
-            WHEN lat < 29.29 THEN 'SOUTH'
+            WHEN i.LAT > 29.31 THEN 'NORTH'
+            WHEN i.LAT < 29.29 THEN 'SOUTH'
             ELSE 'CENTRAL'
-        END                                AS sector,
+        END AS SECTOR,
         CASE
-            WHEN POSITION('respir' IN LOWER(COALESCE(vulnerabilities, ''))) > 0
-              OR severity = 'Immediate' AND POSITION('respir' IN LOWER(location_description)) > 0
+            WHEN POSITION('respir' IN LOWER(COALESCE(TO_VARCHAR(v.INJURIES), ''))) > 0
+              OR i.SEVERITY = 'Immediate'
                 THEN 'respiratory'
-            WHEN POSITION('burn' IN LOWER(COALESCE(vulnerabilities, ''))) > 0
+            WHEN POSITION('burn' IN LOWER(COALESCE(TO_VARCHAR(v.INJURIES), ''))) > 0
                 THEN 'burn'
-            WHEN POSITION('crush' IN LOWER(COALESCE(vulnerabilities, ''))) > 0
-              OR POSITION('trauma' IN LOWER(COALESCE(vulnerabilities, ''))) > 0
-              OR POSITION('fracture' IN LOWER(COALESCE(vulnerabilities, ''))) > 0
+            WHEN POSITION('crush' IN LOWER(COALESCE(TO_VARCHAR(v.INJURIES), ''))) > 0
+              OR POSITION('trauma' IN LOWER(COALESCE(TO_VARCHAR(v.INJURIES), ''))) > 0
                 THEN 'trauma'
             ELSE 'other'
-        END                                AS injury_bucket
-    FROM incidents
-    WHERE timestamp > DATEADD(minute, -5, CURRENT_TIMESTAMP())
+        END AS INJURY_BUCKET
+    FROM {incidents} i
+    LEFT JOIN {victims} v ON i.INCIDENT_ID = v.INCIDENT_ID AND v.VICTIM_ORDINAL = 1
+    WHERE i.TIMESTAMP > DATEADD(minute, -5, CURRENT_TIMESTAMP())
 )
-SELECT injury_bucket, sector, COUNT(*) AS n
+SELECT INJURY_BUCKET, SECTOR, COUNT(*) AS N
 FROM recent
-WHERE injury_bucket != 'other'
-GROUP BY injury_bucket, sector
+WHERE INJURY_BUCKET != 'other'
+GROUP BY INJURY_BUCKET, SECTOR
 HAVING COUNT(*) >= 3
-ORDER BY n DESC
+ORDER BY N DESC
 """
+
+
+CORTEX_CLUSTER_SQL = _cortex_cluster_sql()
 
 
 async def detect_clusters_snowflake(
@@ -87,7 +87,6 @@ def _row_to_alert(row: dict[str, Any], window_minutes: int) -> dict[str, Any]:
     }
 
 
-# ── In-memory fallback ───────────────────────────────────────────────────────
 def detect_clusters(
     incidents: list[IncidentReport],
     *,
@@ -96,6 +95,7 @@ def detect_clusters(
     radius_km: float = 0.5,
 ) -> list[dict[str, Any]]:
     """In-memory clustering used when no Snowflake runner is configured."""
+    _ = radius_km
     now = datetime.now(UTC)
     recent = [i for i in incidents if (now - i.timestamp) <= timedelta(minutes=window_minutes)]
     if len(recent) < min_cluster:
