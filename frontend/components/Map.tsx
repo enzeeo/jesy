@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import type {
+  BlockedRoadsResponse,
   IncidentReport,
   RoadAccessFeatureCollection,
   RoadAccessSummary,
@@ -15,9 +16,18 @@ interface Props {
   incidents: IncidentReport[];
   responders: ResponderUnit[];
   routingResponse: RoutingResponse | null;
+  roadAccess?: RoadAccessSummary | BlockedRoadsResponse | RoadAccessFeatureCollection | null;
+  acceptedRoutes: AcceptedRouteLine[];
   acceptedRouteKeys: Set<string>;
   flashing: Set<string>;
   onSelect: (id: string) => void;
+}
+
+interface AcceptedRouteLine {
+  routeId: string;
+  legId: string;
+  responderId: string;
+  leg: RouteLeg;
 }
 
 // Galveston, Texas demo center
@@ -26,20 +36,45 @@ const TEXAS_DEMO_CENTER = { lng: -94.7977, lat: 29.3013, zoom: 12.7 };
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 
 function isRoadAccessFeatureCollection(
-  roadAccess: RoadAccessSummary | RoadAccessFeatureCollection | null | undefined
+  roadAccess: RoadAccessSummary | BlockedRoadsResponse | RoadAccessFeatureCollection | null | undefined
 ): roadAccess is RoadAccessFeatureCollection {
-  return roadAccess?.type === "FeatureCollection" && Array.isArray(roadAccess.features);
+  return Boolean(
+    roadAccess
+    && "type" in roadAccess
+    && roadAccess.type === "FeatureCollection"
+    && "features" in roadAccess
+    && Array.isArray(roadAccess.features)
+  );
 }
 
 function getRoadAccessFeatureCollection(
-  roadAccess: RoadAccessSummary | RoadAccessFeatureCollection | null | undefined
+  roadAccess: RoadAccessSummary | BlockedRoadsResponse | RoadAccessFeatureCollection | null | undefined
 ): RoadAccessFeatureCollection {
   if (isRoadAccessFeatureCollection(roadAccess)) return roadAccess;
   if (roadAccess?.feature_collection) return roadAccess.feature_collection;
-  if (roadAccess?.features) {
+  if (roadAccess && "features" in roadAccess && roadAccess.features) {
     return { type: "FeatureCollection", features: roadAccess.features };
   }
   return { type: "FeatureCollection", features: [] };
+}
+
+function normalizeRoadAccessFeatureCollection(
+  featureCollection: RoadAccessFeatureCollection
+): RoadAccessFeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: featureCollection.features.map((feature) => {
+      const properties = feature.properties ?? {};
+      const roadStatus = properties.road_status ?? properties.status ?? null;
+      return {
+        ...feature,
+        properties: {
+          ...properties,
+          road_status: roadStatus,
+        },
+      };
+    }),
+  };
 }
 
 function getRouteCoordinates(leg: RouteLeg): [number, number][] {
@@ -55,10 +90,22 @@ function routeFeatureKey(routeId: string | null | undefined, leg: RouteLeg): str
   return `${routeId}:${leg.leg_id}`;
 }
 
+function getLegIncidentId(leg: RouteLeg): string | null {
+  return leg.incident_id ?? (leg.target_type === "incident" ? leg.target_id ?? null : null);
+}
+
+function acceptedRouteIncidentKey(route: AcceptedRouteLine): string | null {
+  const incidentId = getLegIncidentId(route.leg);
+  if (!incidentId) return null;
+  return `${route.responderId}:${incidentId}`;
+}
+
 export function MapView({
   incidents,
   responders,
   routingResponse,
+  roadAccess,
+  acceptedRoutes,
   acceptedRouteKeys,
   flashing,
   onSelect,
@@ -66,6 +113,7 @@ export function MapView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
 
   // ── init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -112,6 +160,11 @@ export function MapView({
         id: "road-access-fill",
         type: "fill",
         source: "road-access",
+        filter: [
+          "match", ["geometry-type"],
+          ["Polygon", "MultiPolygon"], true,
+          false,
+        ],
         paint: {
           "fill-color": [
             "match", ["get", "road_status"],
@@ -139,6 +192,55 @@ export function MapView({
           ],
           "line-width": 1.5,
           "line-opacity": 0.75,
+        },
+      });
+      map.addLayer({
+        id: "road-access-blocked-roads",
+        type: "line",
+        source: "road-access",
+        filter: [
+          "match", ["geometry-type"],
+          ["LineString", "MultiLineString"], true,
+          false,
+        ],
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
+        paint: {
+          "line-color": [
+            "match", ["get", "road_status"],
+            "confirmed_closed", "#EF4444",
+            "likely_flooded", "#EF4444",
+            "restricted", "#F97316",
+            "limited", "#FACC15",
+            "#EF4444",
+          ],
+          "line-width": [
+            "case",
+            ["match", ["get", "road_status"], ["confirmed_closed", "likely_flooded"], true, false], 5,
+            3.5,
+          ],
+          "line-opacity": 0.95,
+        },
+      });
+      map.addLayer({
+        id: "road-access-labels",
+        type: "symbol",
+        source: "road-access",
+        filter: ["has", "label"],
+        layout: {
+          "text-field": ["get", "label"],
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-size": 11,
+          "text-offset": [0, 1.1],
+          "text-anchor": "top",
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": "#FCA5A5",
+          "text-halo-color": "#0B0F19",
+          "text-halo-width": 1.5,
         },
       });
 
@@ -294,9 +396,11 @@ export function MapView({
       });
       map.on("mouseenter", "incident-unclustered", () => map.getCanvas().style.cursor = "pointer");
       map.on("mouseleave", "incident-unclustered", () => map.getCanvas().style.cursor = "");
+      setMapLoaded(true);
     });
 
     return () => {
+      setMapLoaded(false);
       map.remove();
       mapRef.current = null;
     };
@@ -326,41 +430,97 @@ export function MapView({
     })),
   }), [responders]);
 
-  const routeLinesGeoJSON = useMemo(() => ({
-    type: "FeatureCollection" as const,
-    features: Object.entries(routingResponse?.routes ?? {}).flatMap(([responderId, legs]) =>
-      legs.map((leg, index) => {
+  const routeLinesGeoJSON = useMemo(() => {
+    const acceptedRoutesByKey = new Map(
+      acceptedRoutes.map((route) => [`${route.routeId}:${route.legId}`, route])
+    );
+    const acceptedRoutesByResponderIncident = new Map<string, AcceptedRouteLine>();
+    for (const route of acceptedRoutes) {
+      const incidentKey = acceptedRouteIncidentKey(route);
+      if (incidentKey) acceptedRoutesByResponderIncident.set(incidentKey, route);
+    }
+
+    const renderedAcceptedKeys = new Set<string>();
+    const features = Object.entries(routingResponse?.routes ?? {}).flatMap(([responderId, legs]) => {
+      const responder = responders.find((unit) => unit.id === responderId);
+      if (responder?.status === "on_scene") return [];
+      return legs.map((leg, index) => {
         const routeKey = routeFeatureKey(routingResponse?.route_id, leg);
+        const incidentId = getLegIncidentId(leg);
+        const incidentKey = incidentId ? `${responderId}:${incidentId}` : null;
+        const acceptedRoute = (routeKey ? acceptedRoutesByKey.get(routeKey) : undefined)
+          ?? (incidentKey ? acceptedRoutesByResponderIncident.get(incidentKey) : undefined);
+        const displayLeg = acceptedRoute?.leg ?? leg;
+        const accepted = Boolean(acceptedRoute) || (routeKey ? acceptedRouteKeys.has(routeKey) : false);
+        if (acceptedRoute) renderedAcceptedKeys.add(`${acceptedRoute.routeId}:${acceptedRoute.legId}`);
         return {
           type: "Feature" as const,
           geometry: {
             type: "LineString" as const,
-            coordinates: getRouteCoordinates(leg),
+            coordinates: getRouteCoordinates(displayLeg),
           },
           properties: {
             route_key: routeKey,
-            accepted: routeKey ? acceptedRouteKeys.has(routeKey) : false,
-            recommended: true,
+            accepted,
+            recommended: !accepted,
             responder_id: responderId,
             leg_index: index,
-            target_id: leg.target_id ?? leg.incident_id ?? null,
-            target_type: leg.target_type ?? (leg.incident_id ? "incident" : null),
-            incident_id: leg.incident_id ?? null,
-            distance_km: leg.distance_km,
-            eta_seconds: leg.eta_seconds,
-            arrival_seconds: leg.arrival_seconds ?? null,
-            degraded: leg.degraded ?? false,
-            provider_status: leg.provider_status ?? null,
-            assignment_reason: leg.assignment_reason ?? null,
+            target_id: displayLeg.target_id ?? displayLeg.incident_id ?? null,
+            target_type: displayLeg.target_type ?? (displayLeg.incident_id ? "incident" : null),
+            incident_id: displayLeg.incident_id ?? null,
+            distance_km: displayLeg.distance_km,
+            eta_seconds: displayLeg.eta_seconds,
+            arrival_seconds: displayLeg.arrival_seconds ?? null,
+            degraded: displayLeg.degraded ?? false,
+            provider_status: displayLeg.provider_status ?? null,
+            assignment_reason: displayLeg.assignment_reason ?? null,
           },
         };
-      })
-    ),
-  }), [acceptedRouteKeys, routingResponse]);
+      });
+    });
+
+    for (const acceptedRoute of acceptedRoutes) {
+      const responder = responders.find((unit) => unit.id === acceptedRoute.responderId);
+      if (responder?.status === "on_scene") continue;
+      const acceptedKey = `${acceptedRoute.routeId}:${acceptedRoute.legId}`;
+      if (renderedAcceptedKeys.has(acceptedKey)) continue;
+      const incidentId = getLegIncidentId(acceptedRoute.leg);
+      features.push({
+        type: "Feature" as const,
+        geometry: {
+          type: "LineString" as const,
+          coordinates: getRouteCoordinates(acceptedRoute.leg),
+        },
+        properties: {
+          route_key: acceptedKey,
+          accepted: true,
+          recommended: false,
+          responder_id: acceptedRoute.responderId,
+          leg_index: 0,
+          target_id: acceptedRoute.leg.target_id ?? acceptedRoute.leg.incident_id ?? null,
+          target_type: acceptedRoute.leg.target_type ?? (incidentId ? "incident" : null),
+          incident_id: incidentId,
+          distance_km: acceptedRoute.leg.distance_km,
+          eta_seconds: acceptedRoute.leg.eta_seconds,
+          arrival_seconds: acceptedRoute.leg.arrival_seconds ?? null,
+          degraded: acceptedRoute.leg.degraded ?? false,
+          provider_status: acceptedRoute.leg.provider_status ?? null,
+          assignment_reason: acceptedRoute.leg.assignment_reason ?? null,
+        },
+      });
+    }
+
+    return {
+      type: "FeatureCollection" as const,
+      features,
+    };
+  }, [acceptedRouteKeys, acceptedRoutes, responders, routingResponse]);
 
   const roadAccessGeoJSON = useMemo(
-    () => getRoadAccessFeatureCollection(routingResponse?.road_access),
-    [routingResponse]
+    () => normalizeRoadAccessFeatureCollection(
+      getRoadAccessFeatureCollection(roadAccess ?? routingResponse?.road_access)
+    ),
+    [roadAccess, routingResponse]
   );
 
   useEffect(() => {
@@ -389,7 +549,7 @@ export function MapView({
     if (!map) return;
     const src = map.getSource("road-access") as mapboxgl.GeoJSONSource | undefined;
     if (src) src.setData(roadAccessGeoJSON as any);
-  }, [roadAccessGeoJSON]);
+  }, [mapLoaded, roadAccessGeoJSON]);
 
   if (!TOKEN) {
     return (

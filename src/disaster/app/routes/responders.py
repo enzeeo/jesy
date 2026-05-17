@@ -26,6 +26,10 @@ class ResponderLocationPing(BaseModel):
     heading: float | None = Field(default=None, ge=0.0, le=360.0)
 
 
+class CompleteAssignmentRequest(BaseModel):
+    completed_by: str = Field(min_length=1, max_length=120)
+
+
 def _state(req: Request) -> AppState:
     return req.app.state.disaster
 
@@ -145,6 +149,58 @@ async def update_responder_location(
         "distance_m": detection.distance_m,
         "detection_method": detection.detection_method,
     }
+
+
+@router.post("/{responder_id}/assignment/complete")
+async def complete_responder_assignment(
+    responder_id: UUID,
+    payload: CompleteAssignmentRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Mark an on-scene responder's active assignment complete and release the unit."""
+
+    state = _state(request)
+    responder = await state.responders.get(responder_id)
+    if responder is None:
+        raise HTTPException(status_code=404, detail=f"responder {responder_id} not found")
+
+    active_dispatch = await state.active_dispatches.get_for_responder(responder_id)
+    if active_dispatch is None:
+        raise HTTPException(status_code=404, detail="active assignment not found")
+
+    incident = await state.incidents.get(active_dispatch.incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail=f"incident {active_dispatch.incident_id} not found")
+
+    completed_dispatch = await state.active_dispatches.complete_for_responder(responder_id)
+    if completed_dispatch is None:
+        raise HTTPException(status_code=404, detail="active assignment not found")
+
+    released_responder = await state.responders.set_status(
+        responder_id,
+        ResponderStatus.IDLE,
+        assigned_incident_id=None,
+    )
+    resolved_incident = await state.incidents.update(
+        incident.model_copy(update={"status": IncidentStatus.RESOLVED})
+    )
+    event_data = {
+        "assignment_id": completed_dispatch.dispatch_id,
+        "route_id": completed_dispatch.route_id,
+        "leg_id": completed_dispatch.leg_id,
+        "responder_id": str(completed_dispatch.responder_id),
+        "incident_id": str(completed_dispatch.incident_id),
+        "status": released_responder.status.value,
+        "completed_by": payload.completed_by,
+        "responder": released_responder.model_dump(mode="json"),
+        "incident": resolved_incident.model_dump(mode="json"),
+    }
+    await state.events.publish({
+        "type": "dispatch_completed",
+        "data": event_data,
+        "sequence_id": state.events.next_sequence_id(),
+    })
+    return event_data
 
 
 @router.get("/{responder_id}/assignment")

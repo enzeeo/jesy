@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { useSSE } from "@/lib/useSSE";
 import type {
+  DispatchCompletedData,
   DispatchStartedData,
   Location,
   ResponderArrivedData,
@@ -56,6 +57,7 @@ export default function ResponderPage() {
   const [manualLng, setManualLng] = useState(DEFAULT_LOCATION.lng.toFixed(5));
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [completing, setCompleting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const selectedResponder = useMemo(
@@ -125,6 +127,14 @@ export default function ResponderPage() {
       setAssignment(data.assignment ?? null);
       loadAssignment(responderId);
       setMessage("Dispatch received.");
+    } else if (event.type === "dispatch_completed") {
+      const data = event.data as DispatchCompletedData;
+      if (data.responder_id !== selectedResponderId) return;
+      if (data.responder) {
+        setResponders((previous) => previous.map((unit) => unit.id === data.responder!.id ? data.responder! : unit));
+      }
+      setAssignment(null);
+      setMessage("Aid complete. Unit available.");
     } else if (event.type === "responders_seeded" || event.type === "state_reset") {
       refreshSelected();
     }
@@ -187,10 +197,34 @@ export default function ResponderPage() {
     sendPing(makePing(next.lat, next.lng, 30));
   }
 
+  async function completeAid() {
+    if (!selectedResponderId || !assignment) return;
+    setCompleting(true);
+    setMessage(null);
+    try {
+      const response = await api.completeResponderAssignment(selectedResponderId, {
+        completed_by: selectedResponder?.callsign ?? "responder",
+      });
+      if (response.responder) {
+        setResponders((previous) => previous.map((unit) =>
+          unit.id === response.responder!.id ? response.responder! : unit
+        ));
+      }
+      setAssignment(null);
+      setMessage("Aid complete. Unit available.");
+      await refreshSelected();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Completion failed.");
+    } finally {
+      setCompleting(false);
+    }
+  }
+
   const leg = assignmentLeg(assignment);
   const incidentId = assignment?.incident_id ?? assignment?.incident?.id ?? leg?.incident_id ?? leg?.target_id ?? null;
   const etaSeconds = assignment?.eta_seconds ?? leg?.eta_seconds ?? null;
   const distanceKm = assignment?.distance_km ?? leg?.distance_km ?? null;
+  const canCompleteAid = Boolean(assignment && selectedResponder?.status === "on_scene");
 
   return (
     <main className="h-screen overflow-y-auto bg-bg-base text-fg-primary">
@@ -324,6 +358,17 @@ export default function ResponderPage() {
               </button>
             </div>
             {message ? <div className="mono mt-3 text-xs text-status-warn">{message}</div> : null}
+          </div>
+
+          <div className="border border-border-strong bg-bg-base p-3">
+            <div className="mono text-xs uppercase tracking-wider text-fg-secondary">Aid</div>
+            <button
+              disabled={completing || !canCompleteAid}
+              onClick={completeAid}
+              className="mono mt-3 w-full border border-status-good px-3 py-3 text-xs font-bold uppercase text-status-good hover:bg-bg-elev disabled:opacity-40"
+            >
+              {completing ? "Completing" : "Aid Complete"}
+            </button>
           </div>
         </section>
       </div>

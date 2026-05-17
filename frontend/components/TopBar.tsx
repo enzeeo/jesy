@@ -13,7 +13,7 @@ interface Props {
 export function TopBar({ connected, incidentsCount, respondersCount, onAction, onOptimize }: Props) {
   const [scenarios, setScenarios] = useState<Array<{ key: string; preview: string }>>([]);
   const [nowUtc, setNowUtc] = useState("--:--:--");
-  const [pending, setPending] = useState<string | null>(null);
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     api.scenarios().then((s) => setScenarios(s.scenarios)).catch(() => {});
@@ -23,13 +23,17 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction, o
     return () => clearInterval(t);
   }, []);
 
-  async function run(label: string, fn: () => Promise<unknown> | unknown) {
-    setPending(label);
+  async function run(actionKey: string, fn: () => Promise<unknown> | unknown) {
+    setPendingActions((previous) => new Set(previous).add(actionKey));
     try {
       await fn();
       await onAction();
     } finally {
-      setPending(null);
+      setPendingActions((previous) => {
+        const next = new Set(previous);
+        next.delete(actionKey);
+        return next;
+      });
     }
   }
 
@@ -50,36 +54,35 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction, o
       </div>
 
       <div className="flex items-center gap-2">
-        <TopBarButton label="Seed Responders" pending={pending} onClick={() => run("seed", api.seedResponders)} />
-        <TopBarButton label="Start Sim" pending={pending} onClick={() => run("sim", () => api.simStart(200, 60))} />
-        <TopBarButton label="Optimize" pending={pending} onClick={() => run("optimize", onOptimize)} />
-        <TopBarButton label="Cortex Scan" pending={pending} onClick={() => run("cortex", api.cortexScan)} />
+        <TopBarButton label="Seed Responders" pending={pendingActions.has("seed")} onClick={() => run("seed", api.seedResponders)} />
+        <TopBarButton label="Start Sim" pending={pendingActions.has("sim")} onClick={() => run("sim", () => api.simStart(200, 60))} />
+        <TopBarButton label="Optimize" pending={pendingActions.has("optimize")} onClick={() => run("optimize", onOptimize)} />
+        <TopBarButton label="Cortex Scan" pending={pendingActions.has("cortex")} onClick={() => run("cortex", api.cortexScan)} />
         <div className="mx-2 h-6 w-px bg-border-strong" />
         {scenarios.map((s) => (
           <TopBarButton
             key={s.key}
             label={`Call: ${s.key}`}
-            pending={pending}
+            pending={pendingActions.has(s.key)}
             onClick={() => run(s.key, () => api.triggerCall(s.key))}
           />
         ))}
         <div className="mx-2 h-6 w-px bg-border-strong" />
-        <TopBarButton label="Reset" pending={pending} onClick={() => run("reset", api.reset)} />
+        <TopBarButton label="Reset" pending={pendingActions.has("reset")} onClick={() => run("reset", api.reset)} />
       </div>
     </div>
   );
 }
 
-function TopBarButton({ label, pending, onClick }: { label: string; pending: string | null; onClick: () => void }) {
-  const isMe = pending === label.toLowerCase().split(":")[0].trim();
+function TopBarButton({ label, pending, onClick }: { label: string; pending: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      disabled={pending !== null}
+      disabled={pending}
       className="mono border border-border-strong bg-bg-elev px-2.5 py-1 text-xs text-fg-primary
                  hover:bg-bg-base disabled:opacity-50 disabled:cursor-not-allowed"
     >
-      {isMe ? "…" : label}
+      {pending ? "..." : label}
     </button>
   );
 }

@@ -44,6 +44,7 @@ from disaster.snowflake import (
 # Load .env from project root if present. Safe to call multiple times; safe in tests.
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_PROJECT_ROOT / ".env", override=False)
+load_dotenv(_PROJECT_ROOT / "frontend" / ".env.local", override=False)
 
 log = logging.getLogger(__name__)
 

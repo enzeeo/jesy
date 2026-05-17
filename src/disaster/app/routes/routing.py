@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from disaster.models import (
     IncidentReport,
@@ -16,7 +17,9 @@ from disaster.models import (
     ResponderStatus,
     ResponderUnit,
 )
+from disaster.road_access import blocked_roads_stub
 from disaster.routing import DispatchTarget, optimize, optimize_weighted_flow
+from disaster.routing.weighted import _estimate_route, summarize_road_access
 from disaster.store import (
     ActiveDispatch,
     DispatchConflictError,
@@ -30,49 +33,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/routing", tags=["routing"])
-
-DEMO_ROAD_ACCESS: dict[str, Any] = {
-    "type": "FeatureCollection",
-    "features": [
-        {
-            "type": "Feature",
-            "properties": {
-                "road_status": "confirmed_closed",
-                "label": "Harbor flood closure",
-                "confidence": 0.92,
-            },
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[
-                    [-94.7899, 29.3097],
-                    [-94.7873, 29.3097],
-                    [-94.7873, 29.3123],
-                    [-94.7899, 29.3123],
-                    [-94.7899, 29.3097],
-                ]],
-            },
-        },
-        {
-            "type": "Feature",
-            "properties": {
-                "road_status": "confirmed_closed",
-                "label": "Seawall washout",
-                "confidence": 0.88,
-            },
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[
-                    [-94.8057, 29.2796],
-                    [-94.8012, 29.2796],
-                    [-94.8012, 29.2824],
-                    [-94.8057, 29.2824],
-                    [-94.8057, 29.2796],
-                ]],
-            },
-        },
-    ],
-}
-
 
 class DispatchCluster(BaseModel):
     id: str = Field(min_length=1, max_length=120)
@@ -116,6 +76,19 @@ def _state(req: Request) -> AppState:
     return req.app.state.disaster
 
 
+@router.get("/road-access")
+async def get_road_access(request: Request) -> dict[str, Any]:
+    state = _state(request)
+    return summarize_road_access(await state.road_access.get())
+
+
+@router.get("/blocked-roads")
+async def get_blocked_roads(request: Request) -> dict[str, Any]:
+    state = _state(request)
+    road_access = await state.road_access.get()
+    return blocked_roads_stub(road_access)
+
+
 @router.post("/optimize")
 async def optimize_routes(
     request: Request,
@@ -127,18 +100,31 @@ async def optimize_routes(
     without a stub body to exercise the legacy OR-Tools/greedy path.
     """
     state = _state(request)
+    road_access = await state.road_access.get()
+    active_dispatches = await state.active_dispatches.list()
+    active_assignments = _accepted_assignments_from_active_dispatches(active_dispatches)
     if payload is None:
+        active_incident_ids = {dispatch.incident_id for dispatch in active_dispatches}
         incidents = [
             incident for incident in await state.incidents.list()
             if incident.status in {IncidentStatus.NEW, IncidentStatus.DISPATCHED}
+            or incident.id in active_incident_ids
         ]
         responders = await state.responders.list()
-        if prefer_vrp:
-            assignment = optimize(incidents, responders, prefer_vrp=True)
+        if prefer_vrp and not active_assignments:
+            assignment = await run_in_threadpool(optimize, incidents, responders, prefer_vrp=True)
         else:
             targets = [DispatchTarget.from_incident(incident) for incident in incidents]
-            assignment = optimize_weighted_flow(targets, responders, road_access=DEMO_ROAD_ACCESS)
+            assignment = await run_in_threadpool(
+                optimize_weighted_flow,
+                targets,
+                responders,
+                road_access=road_access,
+                accepted_assignments=active_assignments,
+            )
     else:
+        if payload.road_access is not None:
+            road_access = await state.road_access.set(payload.road_access)
         responders = payload.responders
         if responders is None:
             responders = await state.responders.list()
@@ -150,15 +136,21 @@ async def optimize_routes(
             incidents = [
                 incident for incident in await state.incidents.list()
                 if incident.status in {IncidentStatus.NEW, IncidentStatus.DISPATCHED}
+                or incident.id in {dispatch.incident_id for dispatch in active_dispatches}
             ]
             targets.extend(DispatchTarget.from_incident(incident) for incident in incidents)
-        assignment = optimize_weighted_flow(
+        accepted_assignments = {
+            **payload.accepted_assignments,
+            **active_assignments,
+        }
+        assignment = await run_in_threadpool(
+            optimize_weighted_flow,
             targets,
             responders,
-            road_access=payload.road_access,
+            road_access=road_access,
             route_stop_limit=payload.route_stop_limit,
             max_candidates=payload.max_candidates,
-            accepted_assignments=payload.accepted_assignments,
+            accepted_assignments=accepted_assignments,
         )
 
     route_id = str(uuid4())
@@ -184,7 +176,17 @@ async def optimize_routes(
         },
         "sequence_id": state.events.next_sequence_id(),
     })
+    await _publish_road_access_updated(state, road_access)
     return response_payload
+
+
+def _accepted_assignments_from_active_dispatches(
+    active_dispatches: list[ActiveDispatch],
+) -> dict[UUID, str]:
+    return {
+        dispatch.responder_id: str(dispatch.incident_id)
+        for dispatch in active_dispatches
+    }
 
 
 @router.post("/dispatches/start")
@@ -208,6 +210,14 @@ async def start_dispatch(
     if incident is None:
         raise HTTPException(status_code=404, detail=f"incident {recommendation_leg.incident_id} not found")
 
+    road_access = await state.road_access.get()
+    dispatch_leg = _leg_with_current_origin(
+        recommendation_leg.leg,
+        from_location=responder.location,
+        to_location=incident.location,
+        road_access=road_access,
+    )
+
     new_dispatch = ActiveDispatch(
         dispatch_id=str(uuid4()),
         route_id=payload.route_id,
@@ -217,7 +227,7 @@ async def start_dispatch(
         started_by=payload.started_by,
         started_at=datetime.now(UTC),
         solver=recommendation_leg.solver,
-        leg=recommendation_leg.leg,
+        leg=dispatch_leg,
     )
     try:
         dispatch, created = await state.active_dispatches.start(new_dispatch)
@@ -277,6 +287,14 @@ def _serialize_assignment(assignment: Any, *, route_id: str) -> dict[str, Any]:
     if road_access is not None:
         payload["road_access"] = road_access
     return payload
+
+
+async def _publish_road_access_updated(state: AppState, road_access: dict[str, Any]) -> None:
+    await state.events.publish({
+        "type": "road_access_updated",
+        "data": summarize_road_access(road_access),
+        "sequence_id": state.events.next_sequence_id(),
+    })
 
 
 def _serialize_leg(leg: Any, *, route_id: str, responder_id: str, leg_index: int) -> dict[str, Any]:
@@ -342,6 +360,36 @@ def _incident_id_from_leg(leg: dict[str, Any]) -> UUID | None:
     if not isinstance(raw_incident_id, str) or not raw_incident_id:
         return None
     return _parse_uuid(raw_incident_id)
+
+
+def _leg_with_current_origin(
+    leg: dict[str, Any],
+    *,
+    from_location: Location,
+    to_location: Location,
+    road_access: dict[str, Any],
+) -> dict[str, Any]:
+    road_summary = summarize_road_access(road_access)
+    route_estimate = _estimate_route(
+        from_location,
+        to_location,
+        road_summary,
+        allow_live_provider=True,
+    )
+    updated_leg = {
+        **leg,
+        "from_location": from_location.model_dump(),
+        "to_location": to_location.model_dump(),
+        "distance_km": route_estimate.distance_km,
+        "eta_seconds": route_estimate.eta_seconds,
+        "route_geometry": route_estimate.route_geometry,
+        "degraded": route_estimate.degraded,
+        "provider_status": route_estimate.provider_status,
+        "warnings": list(route_estimate.warnings),
+    }
+    if "arrival_seconds" in updated_leg:
+        updated_leg["arrival_seconds"] = route_estimate.eta_seconds
+    return updated_leg
 
 
 def _parse_uuid(value: str) -> UUID | None:

@@ -16,12 +16,14 @@ Production would back this with sqlite or Postgres but the API stays the same.
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from disaster.models import IncidentReport, ResponderStatus, ResponderUnit
+from disaster.road_access import demo_road_access
 
 
 class DispatchConflictError(RuntimeError):
@@ -59,6 +61,21 @@ class ActiveDispatch:
     started_at: datetime
     solver: str
     leg: dict[str, Any]
+
+
+class RoadAccessStore:
+    def __init__(self) -> None:
+        self._feature_collection: dict[str, Any] = demo_road_access()
+        self._lock = asyncio.Lock()
+
+    async def get(self) -> dict[str, Any]:
+        async with self._lock:
+            return deepcopy(self._feature_collection)
+
+    async def set(self, feature_collection: dict[str, Any]) -> dict[str, Any]:
+        async with self._lock:
+            self._feature_collection = deepcopy(feature_collection)
+            return deepcopy(self._feature_collection)
 
 
 class IncidentStore:
@@ -187,3 +204,15 @@ class ActiveDispatchStore:
     async def get_for_responder(self, responder_id: UUID) -> ActiveDispatch | None:
         async with self._lock:
             return self._dispatches_by_responder.get(responder_id)
+
+    async def complete_for_responder(self, responder_id: UUID) -> ActiveDispatch | None:
+        async with self._lock:
+            dispatch = self._dispatches_by_responder.pop(responder_id, None)
+            if dispatch is None:
+                return None
+            self._dispatches_by_leg.pop((dispatch.route_id, dispatch.leg_id), None)
+            return dispatch
+
+    async def list(self) -> list[ActiveDispatch]:
+        async with self._lock:
+            return list(self._dispatches_by_responder.values())

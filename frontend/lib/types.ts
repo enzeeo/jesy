@@ -63,9 +63,19 @@ export interface RoadAccessMultiPolygon {
   coordinates: [number, number][][][] | number[][][][];
 }
 
+export interface RoadAccessLineString {
+  type: "LineString";
+  coordinates: [number, number][] | number[][];
+}
+
+export interface RoadAccessMultiLineString {
+  type: "MultiLineString";
+  coordinates: [number, number][][] | number[][][];
+}
+
 export interface RoadAccessFeature {
   type: "Feature";
-  geometry: RoadAccessPolygon | RoadAccessMultiPolygon;
+  geometry: RoadAccessPolygon | RoadAccessMultiPolygon | RoadAccessLineString | RoadAccessMultiLineString;
   properties?: Record<string, string | number | boolean | null>;
 }
 
@@ -76,9 +86,28 @@ export interface RoadAccessFeatureCollection {
 
 export interface RoadAccessSummary {
   feature_count?: number;
+  hard_avoid_count?: number;
+  soft_penalty_count?: number;
+  status_counts?: Record<string, number>;
+  provider?: string;
+  avoidance_strategy?: string;
   features?: RoadAccessFeature[];
   feature_collection?: RoadAccessFeatureCollection;
   type?: "FeatureCollection";
+}
+
+export interface BlockedRoad {
+  label: string;
+  road_status: string;
+  confidence?: number | null;
+  geometry: RoadAccessFeature["geometry"] | null;
+}
+
+export interface BlockedRoadsResponse {
+  blocked_count: number;
+  hard_avoid_count: number;
+  blocked_roads: BlockedRoad[];
+  feature_collection: RoadAccessFeatureCollection;
 }
 
 export interface RouteLeg {
@@ -119,12 +148,30 @@ export interface StartDispatchResponse {
   leg_id?: string;
   responder_id?: string;
   incident_id?: string;
+  route_leg?: RouteLeg;
+  assignment?: ResponderAssignment;
   responder?: ResponderUnit;
   responders?: ResponderUnit[];
   incident?: IncidentReport;
   incidents?: IncidentReport[];
   routing_response?: RoutingResponse;
   status?: string;
+}
+
+export interface CompleteAssignmentRequest {
+  completed_by: string;
+}
+
+export interface CompleteAssignmentResponse {
+  assignment_id?: string;
+  route_id?: string;
+  leg_id?: string;
+  responder_id?: string;
+  incident_id?: string;
+  status?: string;
+  completed_by?: string;
+  responder?: ResponderUnit;
+  incident?: IncidentReport;
 }
 
 export interface ResponderLocationPing {
@@ -171,10 +218,13 @@ export interface DispatchStartedData {
   assignment?: ResponderAssignment;
 }
 
+export interface DispatchCompletedData extends CompleteAssignmentResponse {}
+
 export interface ResponderArrivedData {
   responder_id: string;
   incident_id: string;
   location: Location;
+  responder?: ResponderUnit;
 }
 
 export interface SSEEvent<T = unknown> {

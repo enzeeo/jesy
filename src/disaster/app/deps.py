@@ -14,6 +14,7 @@ from disaster.store import (
     ActiveDispatchStore,
     IncidentStore,
     ResponderStore,
+    RoadAccessStore,
     RouteRecommendationStore,
 )
 from disaster.tracking import ResponderTrackingStore
@@ -28,6 +29,7 @@ class AppState:
     responders: ResponderStore = field(default_factory=ResponderStore)
     route_recommendations: RouteRecommendationStore = field(default_factory=RouteRecommendationStore)
     active_dispatches: ActiveDispatchStore = field(default_factory=ActiveDispatchStore)
+    road_access: RoadAccessStore = field(default_factory=RoadAccessStore)
     responder_tracking: ResponderTrackingStore = field(default_factory=ResponderTrackingStore)
     events: EventBroker = field(default_factory=EventBroker)
     snowflake: SnowflakeWriter | None = None        # injected at startup

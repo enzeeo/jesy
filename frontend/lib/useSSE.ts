@@ -29,7 +29,9 @@ export function useSSE(handler: Handler, deps: React.DependencyList = []) {
 
     const types = [
       "incident_created", "severity_upgraded", "route_recomputed",
+      "road_access_updated",
       "dispatch_started", "responder_location_updated", "responder_arrived",
+      "dispatch_completed",
       "cortex_alert", "sim_started", "responders_seeded", "state_reset", "ready",
     ];
     const listeners: Array<[string, (e: MessageEvent) => void]> = [];

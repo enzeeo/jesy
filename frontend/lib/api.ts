@@ -22,6 +22,8 @@ export const api = {
     }),
   // Responders + routing
   optimize: () => jsonFetch<import("./types").RoutingResponse>("/routing/optimize", { method: "POST" }),
+  roadAccess: () => jsonFetch<import("./types").RoadAccessSummary>("/routing/road-access"),
+  blockedRoads: () => jsonFetch<import("./types").BlockedRoadsResponse>("/routing/blocked-roads"),
   startDispatch: (payload: import("./types").StartDispatchRequest) =>
     jsonFetch<import("./types").StartDispatchResponse>("/routing/dispatches/start", {
       method: "POST",
@@ -29,6 +31,11 @@ export const api = {
     }),
   responderAssignment: (id: string) =>
     jsonFetch<import("./types").ResponderAssignment | null>(`/responders/${id}/assignment`).catch(() => null),
+  completeResponderAssignment: (id: string, payload: import("./types").CompleteAssignmentRequest) =>
+    jsonFetch<import("./types").CompleteAssignmentResponse>(`/responders/${id}/assignment/complete`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   updateResponderLocation: (id: string, ping: import("./types").ResponderLocationPing) =>
     jsonFetch<import("./types").ResponderLocationResponse>(`/responders/${id}/location`, {
       method: "POST",

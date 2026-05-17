@@ -23,9 +23,12 @@ SOFT_PENALTY_STATUSES = {"restricted", "uncertain_needs_verification"}
 HARD_AVOID_STUB_WARNING = "hard road closures not enforced by stub provider"
 SOFT_ROAD_PENALTY_SECONDS = 90.0
 HARD_ROAD_DEGRADED_PENALTY_SECONDS = 300.0
+MAPBOX_DIRECTIONS_URL = "https://api.mapbox.com/directions/v5"
+MAPBOX_DIRECTIONS_PROFILE = "mapbox/driving-traffic"
 ORS_DIRECTIONS_URL = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
 ORS_TIMEOUT_SECONDS = 2.5
 LIVE_ROUTING_ENV = "OPENROUTESERVICE_LIVE_ROUTING"
+PROVIDER_TIMEOUT_SECONDS = 2.5
 
 
 @dataclass(frozen=True)
@@ -225,8 +228,8 @@ def summarize_road_access(road_access: Mapping[str, Any] | None) -> dict[str, An
         "hard_avoid_count": hard_count,
         "soft_penalty_count": soft_count,
         "status_counts": status_counts,
-        "provider": "openrouteservice" if _live_routing_enabled() else "stub_haversine",
-        "avoidance_strategy": "ors_avoid_polygons_when_enabled_else_stub_warning",
+        "provider": _routing_provider_name(),
+        "avoidance_strategy": "mapbox_roads_with_visual_closures_else_ors_avoid_polygons_else_stub_warning",
     }
     if road_access and road_access.get("type") == "FeatureCollection":
         summary["feature_collection"] = road_access
@@ -336,16 +339,50 @@ def _estimate_route(
     *,
     allow_live_provider: bool,
 ) -> RouteEstimate:
-    api_key = os.environ.get("OPENROUTESERVICE_API_KEY", "")
-    if api_key and allow_live_provider and _live_routing_enabled():
-        estimate = _estimate_route_with_ors(from_location, to_location, road_summary, api_key)
+    mapbox_api_key = _mapbox_api_key()
+    mapbox_warning: str | None = None
+    if mapbox_api_key and allow_live_provider:
+        estimate = _estimate_route_with_mapbox(from_location, to_location, mapbox_api_key)
         if estimate is not None:
             return estimate
-    return _estimate_route_with_stub(from_location, to_location, road_summary)
+        mapbox_warning = "mapbox directions unavailable; using fallback provider"
+
+    ors_api_key = os.environ.get("OPENROUTESERVICE_API_KEY", "")
+    if ors_api_key and allow_live_provider and _live_routing_enabled():
+        estimate = _estimate_route_with_ors(from_location, to_location, road_summary, ors_api_key)
+        if estimate is not None:
+            return estimate
+        return _estimate_route_with_stub(
+            from_location,
+            to_location,
+            road_summary,
+            extra_warning=mapbox_warning or "openrouteservice unavailable; using stub haversine",
+        )
+    return _estimate_route_with_stub(
+        from_location,
+        to_location,
+        road_summary,
+        extra_warning=mapbox_warning,
+    )
 
 
 def _live_routing_enabled() -> bool:
     return os.environ.get(LIVE_ROUTING_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _mapbox_api_key() -> str:
+    return (
+        os.environ.get("MAPBOX_ACCESS_TOKEN", "").strip()
+        or os.environ.get("NEXT_PUBLIC_MAPBOX_TOKEN", "").strip()
+    )
+
+
+def _routing_provider_name() -> str:
+    if _mapbox_api_key():
+        return "mapbox_directions"
+    if os.environ.get("OPENROUTESERVICE_API_KEY", "") and _live_routing_enabled():
+        return "openrouteservice"
+    return "stub_haversine"
 
 
 def _estimate_route_with_stub(
@@ -389,6 +426,48 @@ def _estimate_route_with_stub(
         degraded=degraded,
         warnings=tuple(warnings),
     )
+
+
+def _estimate_route_with_mapbox(
+    from_location: Location,
+    to_location: Location,
+    api_key: str,
+) -> RouteEstimate | None:
+    try:
+        profile = os.environ.get("MAPBOX_DIRECTIONS_PROFILE", MAPBOX_DIRECTIONS_PROFILE).strip()
+        coordinates = (
+            f"{from_location.lng},{from_location.lat};"
+            f"{to_location.lng},{to_location.lat}"
+        )
+        url = (
+            f"{os.environ.get('MAPBOX_DIRECTIONS_URL', MAPBOX_DIRECTIONS_URL).rstrip('/')}/"
+            f"{profile}/{coordinates}"
+        )
+        with httpx.Client(timeout=PROVIDER_TIMEOUT_SECONDS) as client:
+            response = client.get(
+                url,
+                params={
+                    "overview": "full",
+                    "geometries": "geojson",
+                    "access_token": api_key,
+                },
+            )
+            response.raise_for_status()
+        payload = response.json()
+        route = payload["routes"][0]
+        geometry = route["geometry"]
+        if geometry.get("type") != "LineString":
+            return None
+        return RouteEstimate(
+            distance_km=float(route["distance"]) / 1000.0,
+            eta_seconds=float(route["duration"]),
+            route_geometry=geometry,
+            provider_status="mapbox_directions",
+            degraded=False,
+            warnings=(),
+        )
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
+        return None
 
 
 def _estimate_route_with_ors(

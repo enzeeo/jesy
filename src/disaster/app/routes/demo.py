@@ -32,6 +32,8 @@ from disaster.models import (
     ResponderUnit,
     Victim,
 )
+from disaster.road_access import demo_road_access
+from disaster.routing.weighted import summarize_road_access
 from disaster.triage import score
 
 if TYPE_CHECKING:
@@ -67,6 +69,7 @@ async def seed_responders(request: Request) -> dict[str, Any]:
         "data": {"count": len(units)},
         "sequence_id": state.events.next_sequence_id(),
     })
+    await _publish_road_access_updated(state)
     return {"seeded": [u.callsign for u in units]}
 
 
@@ -78,12 +81,22 @@ async def reset_state(request: Request) -> dict[str, Any]:
     state.incidents._incidents.clear()
     state.incidents._sim_index.clear()
     state.responders._units.clear()
+    await state.road_access.set(demo_road_access())
     await state.events.publish({
         "type": "state_reset",
         "data": {},
         "sequence_id": state.events.next_sequence_id(),
     })
+    await _publish_road_access_updated(state)
     return {"status": "reset"}
+
+
+async def _publish_road_access_updated(state: AppState) -> None:
+    await state.events.publish({
+        "type": "road_access_updated",
+        "data": summarize_road_access(await state.road_access.get()),
+        "sequence_id": state.events.next_sequence_id(),
+    })
 
 
 # Pre-recorded transcripts. In a real demo these come from ElevenLabs voice flow;
