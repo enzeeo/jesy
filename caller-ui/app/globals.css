@@ -28,6 +28,17 @@ textarea {
   font: inherit;
 }
 
+/* iOS Safari: <button> with large bold text triggers text-selection on tap
+   instead of firing click. touch-action: manipulation removes the 300ms tap
+   delay and the long-press selection gesture. user-select: none keeps the
+   label from becoming a selectable text run. */
+button {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,

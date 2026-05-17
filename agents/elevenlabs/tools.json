@@ -1,0 +1,24 @@
+{
+    "tools": [
+        {
+            "type": "webhook",
+            "config": "tool_configs/create_incident_provisional.json",
+            "id": "tool_1301krszsj3te1nb2nkhxrwd5n0z"
+        },
+        {
+            "type": "webhook",
+            "config": "tool_configs/update_assessment.json",
+            "id": "tool_5701krszsj7zfpx9mgqn9wtvsne0"
+        },
+        {
+            "type": "webhook",
+            "config": "tool_configs/query_nearby_resources.json",
+            "id": "tool_4301krszsj9vek18pns8g74mp6zq"
+        },
+        {
+            "type": "webhook",
+            "config": "tool_configs/finalize.json",
+            "id": "tool_8901krszdz6ren0837had93atmng"
+        }
+    ]
+}

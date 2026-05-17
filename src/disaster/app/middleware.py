@@ -14,15 +14,17 @@ log = logging.getLogger(__name__)
 
 def register_elevenlabs_hmac(app: FastAPI) -> None:
     """
-    Verify HMAC-SHA256 signature on /intake/voice. If app.state.disaster.elevenlabs_secret
-    is unset (dev mode), allow all requests through with a warning.
+    Verify HMAC-SHA256 signature on /intake/voice and all /intake/voice/* paths
+    (server-tool endpoints called by the ElevenLabs Conversational AI agent).
+    If app.state.disaster.elevenlabs_secret is unset (dev mode), allow all
+    requests through with a warning.
     """
     from fastapi import Request
     from fastapi.responses import JSONResponse
 
     @app.middleware("http")
     async def verify_sig(request: Request, call_next):
-        if request.url.path != "/intake/voice":
+        if not request.url.path.startswith("/intake/voice"):
             return await call_next(request)
 
         secret = request.app.state.disaster.elevenlabs_secret
