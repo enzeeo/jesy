@@ -24,6 +24,7 @@ from disaster.app.deps import AppState
 from disaster.app.exception_handler import register as register_exception_handler
 from disaster.app.middleware import register_elevenlabs_hmac
 from disaster.app.routes.analysis import router as analysis_router
+from disaster.app.routes.chat import router as chat_router
 from disaster.app.routes.cortex import router as cortex_router
 from disaster.app.routes.demo import router as demo_router
 from disaster.app.routes.events import router as events_router
