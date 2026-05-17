@@ -40,6 +40,16 @@ interface AcceptedRoute {
   leg: RouteLeg;
 }
 
+interface TrackingTimerState {
+  timer: ReturnType<typeof setInterval>;
+  pingIndex: number;
+  inFlight: boolean;
+}
+
+const TRACKING_INTERVAL_MS = 1500;
+const TRACKING_ROUTE_STEPS = 12;
+const TRACKING_FINAL_DWELL_PINGS = 2;
+
 function getRecommendedDispatch(
   incident: IncidentReport | null,
   responders: ResponderUnit[],
@@ -93,6 +103,91 @@ function routeAssignmentKey(routeId: string | null | undefined, legId: string | 
   return `${routeId}:${legId}`;
 }
 
+function getRouteCoordinates(leg: RouteLeg): [number, number][] {
+  if (leg.route_geometry?.coordinates?.length) return leg.route_geometry.coordinates;
+  return [
+    [leg.from_location.lng, leg.from_location.lat],
+    [leg.to_location.lng, leg.to_location.lat],
+  ];
+}
+
+function interpolateRoutePoint(coordinates: [number, number][], progress: number): [number, number] {
+  if (coordinates.length === 0) return [0, 0];
+  if (coordinates.length === 1) return coordinates[0];
+
+  const segmentLengths = coordinates.slice(1).map((coordinate, index) => {
+    const previous = coordinates[index];
+    return Math.hypot(coordinate[0] - previous[0], coordinate[1] - previous[1]);
+  });
+  const totalLength = segmentLengths.reduce((sum, length) => sum + length, 0);
+  if (totalLength <= 0) return coordinates[coordinates.length - 1];
+
+  let remainingDistance = Math.max(0, Math.min(1, progress)) * totalLength;
+  for (let index = 0; index < segmentLengths.length; index += 1) {
+    const segmentLength = segmentLengths[index];
+    if (remainingDistance > segmentLength) {
+      remainingDistance -= segmentLength;
+      continue;
+    }
+    const previous = coordinates[index];
+    const next = coordinates[index + 1];
+    const segmentProgress = segmentLength > 0 ? remainingDistance / segmentLength : 1;
+    return [
+      previous[0] + (next[0] - previous[0]) * segmentProgress,
+      previous[1] + (next[1] - previous[1]) * segmentProgress,
+    ];
+  }
+  return coordinates[coordinates.length - 1];
+}
+
+function getRemainingRouteCoordinates(coordinates: [number, number][], progress: number): [number, number][] {
+  if (coordinates.length < 2) return coordinates;
+
+  const segmentLengths = coordinates.slice(1).map((coordinate, index) => {
+    const previous = coordinates[index];
+    return Math.hypot(coordinate[0] - previous[0], coordinate[1] - previous[1]);
+  });
+  const totalLength = segmentLengths.reduce((sum, length) => sum + length, 0);
+  if (totalLength <= 0) return coordinates;
+
+  const clampedProgress = Math.max(0, Math.min(1, progress));
+  if (clampedProgress <= 0) return coordinates;
+  if (clampedProgress >= 1) {
+    const finalCoordinate = coordinates[coordinates.length - 1];
+    return [finalCoordinate, finalCoordinate];
+  }
+
+  let traveledDistance = clampedProgress * totalLength;
+  for (let index = 0; index < segmentLengths.length; index += 1) {
+    const segmentLength = segmentLengths[index];
+    if (traveledDistance > segmentLength) {
+      traveledDistance -= segmentLength;
+      continue;
+    }
+    const previous = coordinates[index];
+    const next = coordinates[index + 1];
+    const segmentProgress = segmentLength > 0 ? traveledDistance / segmentLength : 1;
+    const current: [number, number] = [
+      previous[0] + (next[0] - previous[0]) * segmentProgress,
+      previous[1] + (next[1] - previous[1]) * segmentProgress,
+    ];
+    return [current, ...coordinates.slice(index + 1)];
+  }
+
+  const finalCoordinate = coordinates[coordinates.length - 1];
+  return [finalCoordinate, finalCoordinate];
+}
+
+function routeLegWithProgress(leg: RouteLeg, progress: number): RouteLeg {
+  return {
+    ...leg,
+    route_geometry: {
+      type: "LineString",
+      coordinates: getRemainingRouteCoordinates(getRouteCoordinates(leg), progress),
+    },
+  };
+}
+
 function findRouteLeg(
   routingResponse: RoutingResponse | null,
   responderId: string | null | undefined,
@@ -102,7 +197,7 @@ function findRouteLeg(
   return routingResponse.routes[responderId]?.find((leg) => leg.leg_id === legId) ?? null;
 }
 
-function routeLegWithRemainingGeometry(
+function routeLegWithUpdatedGeometry(
   leg: RouteLeg,
   remainingRouteGeometry: RouteLineString | null | undefined
 ): RouteLeg {
@@ -127,7 +222,7 @@ function acceptedRouteFromAssignment(
   const baseLeg = assignmentLeg ?? previousAcceptedRoute?.leg ?? previousAcceptedRoute?.originalLeg ?? null;
   if (!routeId || !legId || !responderId || !baseLeg) return null;
 
-  const leg = routeLegWithRemainingGeometry(
+  const leg = routeLegWithUpdatedGeometry(
     baseLeg,
     remainingRouteGeometry ?? assignment.remaining_route_geometry
   );
@@ -175,6 +270,20 @@ function getRemainingGeometryFromLocationEvent(data: ResponderLocationUpdatedDat
     return data.remaining_route_geometry ?? null;
   }
   return null;
+}
+
+function acceptedRouteIsActive(acceptedRoute: AcceptedRoute, responders: ResponderUnit[]): boolean {
+  const responder = responders.find((unit) => unit.id === acceptedRoute.responderId);
+  if (
+    !responder
+    || responder.status === "idle"
+    || responder.status === "on_scene"
+    || responder.status === "out_of_service"
+  ) {
+    return false;
+  }
+  const incidentId = getLegIncidentId(acceptedRoute.originalLeg);
+  return Boolean(incidentId && responder.assigned_incident_id === incidentId);
 }
 
 export default function Dashboard() {
@@ -241,6 +350,117 @@ export default function Dashboard() {
     refreshRouting();
     refreshRoadAccess();
   }, [refresh, refreshRouting, refreshRoadAccess]);
+
+  useEffect(() => {
+    const trackingTimers = trackingTimersRef.current;
+    return () => {
+      for (const trackingState of trackingTimers.values()) {
+        clearInterval(trackingState.timer);
+      }
+      trackingTimers.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const stopTracking = (routeKey: string) => {
+      const trackingState = trackingTimersRef.current.get(routeKey);
+      if (!trackingState) return;
+      clearInterval(trackingState.timer);
+      trackingTimersRef.current.delete(routeKey);
+    };
+
+    const removeAcceptedRoute = (routeKey: string) => {
+      setAcceptedRoutes((previous) => {
+        if (!previous[routeKey]) return previous;
+        const next = { ...previous };
+        delete next[routeKey];
+        return next;
+      });
+    };
+
+    for (const routeKey of trackingTimersRef.current.keys()) {
+      const acceptedRoute = acceptedRoutes[routeKey];
+      const responder = acceptedRoute
+        ? responders.find((unit) => unit.id === acceptedRoute.responderId)
+        : null;
+      if (!acceptedRoute || !acceptedRouteIsActive(acceptedRoute, responders) || responder?.status === "on_scene") {
+        stopTracking(routeKey);
+      }
+    }
+
+    for (const [routeKey, acceptedRoute] of Object.entries(acceptedRoutes)) {
+      if (trackingTimersRef.current.has(routeKey)) continue;
+      if (!acceptedRouteIsActive(acceptedRoute, responders)) continue;
+      const responder = responders.find((unit) => unit.id === acceptedRoute.responderId);
+      if (!responder || responder.status === "on_scene") continue;
+
+      const coordinates = getRouteCoordinates(acceptedRoute.originalLeg);
+      if (coordinates.length < 2) continue;
+
+      const trackingState: TrackingTimerState = {
+        pingIndex: 0,
+        inFlight: false,
+        timer: setInterval(async () => {
+          const currentTrackingState = trackingTimersRef.current.get(routeKey);
+          if (!currentTrackingState || currentTrackingState.inFlight) return;
+          currentTrackingState.inFlight = true;
+          currentTrackingState.pingIndex += 1;
+
+          const progress = Math.min(1, currentTrackingState.pingIndex / TRACKING_ROUTE_STEPS);
+          const [lng, lat] = progress >= 1
+            ? [acceptedRoute.originalLeg.to_location.lng, acceptedRoute.originalLeg.to_location.lat]
+            : interpolateRoutePoint(coordinates, progress);
+          try {
+            const response = await api.updateResponderLocation(acceptedRoute.responderId, {
+              lat,
+              lng,
+              accuracy_m: 12,
+              timestamp: new Date().toISOString(),
+            });
+            setAcceptedRoutes((previous) => {
+              const currentAcceptedRoute = previous[routeKey];
+              if (!currentAcceptedRoute) return previous;
+              return {
+                ...previous,
+                [routeKey]: {
+                  ...currentAcceptedRoute,
+                  leg: routeLegWithProgress(currentAcceptedRoute.originalLeg, progress),
+                },
+              };
+            });
+            const finalPingLimit = TRACKING_ROUTE_STEPS + TRACKING_FINAL_DWELL_PINGS;
+            if (response.arrival_detected || currentTrackingState.pingIndex >= finalPingLimit) {
+              if (response.arrival_detected) {
+                const arrivalLocation = {
+                  ...acceptedRoute.originalLeg.to_location,
+                  lat,
+                  lng,
+                };
+                setResponders((previous) => previous.map((responder) =>
+                  responder.id === acceptedRoute.responderId
+                    ? { ...responder, status: "on_scene", location: arrivalLocation }
+                    : responder
+                ));
+                if (response.incident_id) {
+                  setIncidents((previous) => previous.map((incident) =>
+                    incident.id === response.incident_id ? { ...incident, status: "on_scene" } : incident
+                  ));
+                }
+              }
+              stopTracking(routeKey);
+              removeAcceptedRoute(routeKey);
+            }
+          } catch (error) {
+            console.warn("demo tracking stopped:", error);
+            stopTracking(routeKey);
+          } finally {
+            currentTrackingState.inFlight = false;
+          }
+        }, TRACKING_INTERVAL_MS),
+      };
+      trackingTimersRef.current.set(routeKey, trackingState);
+    }
+  }, [acceptedRoutes, responders, routingResponse]);
 
   // SSE handler
   const { connected } = useSSE((evt) => {
@@ -357,7 +577,7 @@ export default function Dashboard() {
             changed = true;
             next[routeKey] = {
               ...acceptedRoute,
-              leg: routeLegWithRemainingGeometry(acceptedRoute.leg, remainingRouteGeometry),
+              leg: routeLegWithUpdatedGeometry(acceptedRoute.leg, remainingRouteGeometry),
             };
           }
           return changed ? next : prev;

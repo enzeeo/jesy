@@ -173,6 +173,7 @@ async def optimize_routes(
             solver=assignment.solver,
             elapsed_ms=assignment.elapsed_ms,
             payload=response_payload,
+            road_access_id=road_access_id,
             sim_run_id=state.active_sim_run_id,
         )
 
