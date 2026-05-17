@@ -17,6 +17,7 @@ interface Props {
   dispatching: boolean;
   dispatchError: string | null;
   onStartDispatch: (dispatch: RecommendedDispatch) => Promise<void>;
+  onIncidentUpdated?: (incident: IncidentReport) => void;
   onClose: () => void;
 }
 
@@ -32,10 +33,18 @@ export function IncidentDetail({
   dispatching,
   dispatchError,
   onStartDispatch,
+  onIncidentUpdated,
   onClose,
 }: Props) {
   const v = SEVERITY_VISUAL[incident.severity];
   const [escalating, setEscalating] = useState(false);
+  const [reassessingId, setReassessingId] = useState<string | null>(null);
+  const [reassessById, setReassessById] = useState<
+    Record<string, { note: string | null; error: string | null }>
+  >({});
+  const reassessing = reassessingId === incident.id;
+  const reassessNote = reassessById[incident.id]?.note ?? null;
+  const reassessError = reassessById[incident.id]?.error ?? null;
   const dispatchPreviewOnly = recommendedDispatch?.responder?.status === "on_scene";
 
   async function escalate(to: Severity) {
@@ -45,6 +54,26 @@ export function IncidentDetail({
       await api.escalate(incident.id, to, "manual override");
     } finally {
       setEscalating(false);
+    }
+  }
+
+  async function cortexReassess() {
+    const id = incident.id;
+    setReassessingId(id);
+    setReassessById((prev) => ({ ...prev, [id]: { note: null, error: null } }));
+    try {
+      const res = await api.cortexReassess(id);
+      onIncidentUpdated?.(res.incident);
+      const via = res.source === "snowflake" ? "Snowflake Cortex" : "heuristic";
+      const note = res.changed
+        ? `${via}: ${res.reason}`
+        : `${via}: no change (${res.reason})`;
+      setReassessById((prev) => ({ ...prev, [id]: { note, error: null } }));
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "Reassess failed";
+      setReassessById((prev) => ({ ...prev, [id]: { note: null, error } }));
+    } finally {
+      setReassessingId((current) => (current === id ? null : current));
     }
   }
 
@@ -136,12 +165,33 @@ export function IncidentDetail({
         </div>
 
         <div className="border-t border-border-strong pt-2">
+          <div className="mono text-xs uppercase tracking-wider text-fg-secondary">Cortex triage</div>
+          <p className="mt-1 text-xs text-fg-muted">
+            Re-read the incident description and reassign severity and priority.
+          </p>
+          <button
+            disabled={reassessing || escalating}
+            onClick={cortexReassess}
+            className="mono mt-2 w-full border border-border-strong px-3 py-1.5 text-xs font-bold uppercase
+                       text-fg-primary hover:bg-bg-elev disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {reassessing ? "Reassessing…" : "Cortex reassess"}
+          </button>
+          {reassessNote ? (
+            <div className="mono mt-2 text-xs text-status-good">{reassessNote}</div>
+          ) : null}
+          {reassessError ? (
+            <div className="mono mt-2 text-xs text-status-warn">{reassessError}</div>
+          ) : null}
+        </div>
+
+        <div className="border-t border-border-strong pt-2">
           <div className="mono text-xs uppercase tracking-wider text-fg-secondary">Escalate</div>
           <div className="mt-2 flex gap-1">
             {ALL_SEVERITIES.map((s) => (
               <button
                 key={s}
-                disabled={escalating || s === incident.severity}
+                disabled={escalating || reassessing || s === incident.severity}
                 onClick={() => escalate(s)}
                 className="mono flex-1 border border-border-strong px-2 py-1 text-xs font-bold uppercase
                            hover:bg-bg-elev disabled:opacity-30 disabled:cursor-not-allowed"

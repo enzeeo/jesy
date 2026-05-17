@@ -45,6 +45,29 @@ export const api = {
   tile: (name: string) => jsonFetch<{ tile: string; source: string; rows: any[] }>(`/snowflake/tile/${name}`),
   // Cortex
   cortexScan: () => jsonFetch<{ alerts: any[]; emitted_count: number }>(`/cortex/scan`, { method: "POST" }),
+  cortexReassess: (id: string) =>
+    jsonFetch<import("./types").CortexReassessResponse>(`/cortex/reassess/${id}`, { method: "POST" }),
+  // Dispatch chat
+  createChatSession: (body: {
+    scope?: "global" | "incident" | "sector" | "cluster";
+    scope_ref_id?: string;
+    title?: string;
+  }) =>
+    jsonFetch<import("./types").ChatSession>("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  postChatMessage: (
+    sessionId: string,
+    body: {
+      message: string;
+      context?: { incident_id?: string; sector?: string; cluster_id?: string };
+    },
+  ) =>
+    jsonFetch<import("./types").ChatPostMessageResponse>(
+      `/chat/sessions/${sessionId}/messages`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   // Sim
   simStart: (count = 200, demo_window_s = 60) =>
     jsonFetch(`/sim/start`, {
