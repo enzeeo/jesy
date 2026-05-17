@@ -23,6 +23,7 @@ Table keys are ``{SCHEMA}.{TABLE}`` — see disaster.snowflake.tables.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -247,27 +248,107 @@ def build_snowflake_flush() -> Callable[[str, list[dict[str, Any]]], Awaitable[N
     return flush
 
 
+_POOL_SIZE = 4               # parallel connections; tune up if dashboard polling is heavy
+_POOL_ACQUIRE_TIMEOUT_S = 3  # bail rather than block forever if every conn is sick
+
+
+class SnowflakeQueryPool:
+    """
+    Pool of N independent Snowflake connections, served by a sized
+    ThreadPoolExecutor. Replaces the previous single shared connection that
+    deadlocked the entire query path whenever Snowflake half-closed a session
+    (CLOSE_WAIT accumulation -> next cursor blocks forever -> /healthz dies
+    once asyncio's executor pool fills up).
+
+    Behavior:
+      - Each query acquires one connection from a thread-safe queue, runs to
+        completion in its dedicated executor thread, returns the conn on
+        success.
+      - On exception (timeout from upstream asyncio.wait_for, query error,
+        socket reset) the conn is closed and a fresh one is put back in its
+        place. One bad query costs 1/N capacity for ~1 query duration, not
+        the whole pool.
+      - If a brand-new connection can't be opened (network down, auth flake),
+        the slot stays empty until the next successful refill. ``acquire``
+        times out rather than blocking forever so callers can fall back.
+
+    Threading model:
+      - Connections live in worker threads via a queue.Queue (thread-safe).
+      - Async callers schedule work onto the executor with run_in_executor;
+        if the asyncio coroutine is cancelled, the thread runs to completion
+        and the conn is returned, so cancellation doesn't leak conns.
+    """
+
+    def __init__(self, connect_fn: Callable[[], Any], size: int = _POOL_SIZE) -> None:
+        import queue as _queue
+        from concurrent.futures import ThreadPoolExecutor
+
+        self._connect = connect_fn
+        self._size = size
+        self._executor = ThreadPoolExecutor(max_workers=size, thread_name_prefix="sf-query")
+        self._conns: _queue.Queue = _queue.Queue(maxsize=size)
+        opened = 0
+        for _ in range(size):
+            try:
+                self._conns.put_nowait(connect_fn())
+                opened += 1
+            except Exception as e:  # noqa: BLE001
+                log.warning("snowflake: pool warm-up conn failed (%s)", e)
+        log.info("snowflake: query pool ready (size=%d, opened=%d)", size, opened)
+
+    def _sync_execute(self, sql: str, params: tuple) -> list[dict[str, Any]]:
+        import queue as _queue
+
+        import snowflake.connector
+
+        try:
+            conn = self._conns.get(timeout=_POOL_ACQUIRE_TIMEOUT_S)
+        except _queue.Empty as e:
+            raise TimeoutError("snowflake pool exhausted") from e
+
+        try:
+            cur = conn.cursor(snowflake.connector.DictCursor)
+            try:
+                cur.execute(sql, params)
+                rows = cur.fetchall() or []
+            finally:
+                cur.close()
+        except Exception:
+            # Treat any failure as "this conn is suspect"; close it, try to
+            # replace with a fresh one. If reconnect fails, the slot shrinks
+            # until backend restart.
+            with contextlib.suppress(Exception):
+                conn.close()
+            try:
+                self._conns.put_nowait(self._connect())
+            except Exception as connect_err:  # noqa: BLE001
+                log.warning("snowflake: pool refill failed (%s) — capacity reduced", connect_err)
+            raise
+        else:
+            self._conns.put_nowait(conn)
+            return rows
+
+    async def query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, self._sync_execute, sql, params)
+
+
 def get_query_runner() -> Callable[[str, tuple], Awaitable[list[dict[str, Any]]]] | None:
     """
-    Returns an async function that runs read-only queries against the same connection.
-    None when Snowflake env not configured.
+    Returns an async function backed by a connection pool. None when Snowflake
+    env not configured.
+
+    The returned callable closes over the pool, so the pool stays alive for
+    the lifetime of the app. AAR + tile + cortex endpoints all share the same
+    pool but no single bad query can wedge the others.
     """
     if not env_configured():
         return None
 
     import snowflake.connector
 
-    conn = snowflake.connector.connect(**_connect_params())
+    def _connect() -> Any:
+        return snowflake.connector.connect(**_connect_params())
 
-    def _sync_query(sql: str, params: tuple) -> list[dict[str, Any]]:
-        cur = conn.cursor(snowflake.connector.DictCursor)
-        try:
-            cur.execute(sql, params)
-            return cur.fetchall() or []
-        finally:
-            cur.close()
-
-    async def runner(sql: str, params: tuple = ()) -> list[dict[str, Any]]:
-        return await asyncio.get_running_loop().run_in_executor(None, _sync_query, sql, params)
-
-    return runner
+    pool = SnowflakeQueryPool(_connect)
+    return pool.query
