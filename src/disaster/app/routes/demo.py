@@ -2,7 +2,7 @@
 Demo control endpoints. Used by the dashboard's top-bar buttons to seed state
 and trigger pre-recorded voice calls without going through ElevenLabs.
 
-  POST /demo/seed-responders     stage ALS-1, ALS-2, BLS-1 at Hilo HQ
+  POST /demo/seed-responders     stage ALS-1, ALS-2, BLS-1 in Galveston, Texas
   POST /demo/trigger-call        run a recorded transcript through /intake/voice
   POST /demo/reset               wipe in-memory state
 """
@@ -40,8 +40,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/demo", tags=["demo"])
 
-# Hilo Fire Station 1: 925 Aupuni St
-_HILO_HQ = Location(lat=19.7257, lng=-155.0834, description="Hilo Fire Station 1")
+# Galveston Fire Station 1: 823 25th St, Galveston, TX
+_TEXAS_HQ = Location(lat=29.3013, lng=-94.7977, description="Galveston Fire Station 1")
 
 
 def _state(req: Request) -> AppState:
@@ -52,13 +52,13 @@ def _state(req: Request) -> AppState:
 async def seed_responders(request: Request) -> dict[str, Any]:
     state = _state(request)
     units = [
-        ResponderUnit(callsign="ALS-1", type=ResponderType.ALS, location=_HILO_HQ),
+        ResponderUnit(callsign="ALS-1", type=ResponderType.ALS, location=_TEXAS_HQ),
         ResponderUnit(callsign="ALS-2", type=ResponderType.ALS,
-                      location=Location(lat=19.7203, lng=-155.0773, description="Station 2")),
+                      location=Location(lat=29.2913, lng=-94.8077, description="Station 2, Galveston")),
         ResponderUnit(callsign="BLS-1", type=ResponderType.BLS,
-                      location=Location(lat=19.7330, lng=-155.0950, description="Station 3 (waterfront)")),
+                      location=Location(lat=29.3107, lng=-94.7752, description="Station 5, Seawall")),
         ResponderUnit(callsign="FIRE-1", type=ResponderType.FIRE,
-                      location=Location(lat=19.7257, lng=-155.0834, description="Hilo Fire Station 1")),
+                      location=Location(lat=29.3013, lng=-94.7977, description="Galveston Fire Station 1")),
     ]
     for u in units:
         await state.responders.upsert(u)
@@ -89,29 +89,29 @@ async def reset_state(request: Request) -> dict[str, Any]:
 # Pre-recorded transcripts. In a real demo these come from ElevenLabs voice flow;
 # /demo/trigger-call lets the presenter fire one without the cloud round-trip.
 _TRANSCRIPTS: dict[str, dict[str, Any]] = {
-    "pier4_immediate": {
+    "pier21_immediate": {
         "transcript": (
-            "There's been a wave at the harbor. Pier 4. I see at least one person down, "
-            "they're breathing but very shallow. There's blood on the dock. I think a "
-            "child got pulled in, can someone come quickly?"
+            "There's flooding at the harbor by Pier 21 in Galveston. I see at least one "
+            "person down, they're breathing but very shallow. There's blood on the dock. "
+            "I think a child got pulled in, can someone come quickly?"
         ),
-        "location_hint": "Pier 4, Hilo Bay",
+        "location_hint": "Pier 21, Galveston, TX",
     },
-    "banyan_delayed": {
+    "seawall_delayed": {
         "transcript": (
-            "I'm at the Banyan Drive hotels. There's a guest who fell down the stairs, "
-            "looks like she broke her leg. She's alert, talking to me. Her name's Margaret, "
-            "she's 67 and she takes blood thinners."
+            "I'm at a hotel on Seawall Boulevard in Galveston. There's a guest who fell "
+            "down the stairs, looks like she broke her leg. She's alert, talking to me. "
+            "Her name's Margaret, she's 67 and she takes blood thinners."
         ),
-        "location_hint": "Banyan Drive, Hilo",
+        "location_hint": "Seawall Boulevard, Galveston, TX",
     },
-    "wailoa_minor": {
+    "strand_minor": {
         "transcript": (
-            "Hi, I'm calling from Wailoa Harbor. A fisherman cut his hand on a rope. "
-            "It's bleeding but he's walking around fine. Just wanted to get someone "
-            "to check on him."
+            "Hi, I'm calling from The Strand in Galveston. A shop worker cut his hand "
+            "moving storm debris. It's bleeding but he's walking around fine. Just "
+            "wanted to get someone to check on him."
         ),
-        "location_hint": "Wailoa Harbor",
+        "location_hint": "The Strand, Galveston, TX",
     },
 }
 
@@ -173,9 +173,9 @@ async def list_scenarios() -> dict[str, Any]:
 def _stub_extraction(scenario: str, transcript: str):
     """Deterministic fallback when LLM is not configured."""
     from disaster.models import IncidentReport, Severity
-    if scenario == "pier4_immediate":
+    if scenario == "pier21_immediate":
         return IncidentReport(
-            location=Location(lat=19.7320, lng=-155.0918, description="Pier 4, Hilo Bay"),
+            location=Location(lat=29.3115, lng=-94.7893, description="Pier 21, Galveston, TX"),
             victims=[Victim(
                 age_estimate=10, injuries=["respiratory distress", "submersion"],
                 breathing=Breathing.SPONTANEOUS, perfusion=Perfusion.POOR,
@@ -184,9 +184,9 @@ def _stub_extraction(scenario: str, transcript: str):
             )],
             severity=Severity.DELAYED, confidence=0.92, call_transcript=transcript,
         )
-    if scenario == "banyan_delayed":
+    if scenario == "seawall_delayed":
         return IncidentReport(
-            location=Location(lat=19.7287, lng=-155.0732, description="Banyan Drive, Hilo"),
+            location=Location(lat=29.2818, lng=-94.7963, description="Seawall Boulevard, Galveston, TX"),
             victims=[Victim(
                 age_estimate=67, injuries=["fractured leg"],
                 breathing=Breathing.SPONTANEOUS, perfusion=Perfusion.NORMAL,
@@ -195,9 +195,9 @@ def _stub_extraction(scenario: str, transcript: str):
             )],
             severity=Severity.DELAYED, confidence=0.95, call_transcript=transcript,
         )
-    # wailoa_minor
+    # strand_minor
     return IncidentReport(
-        location=Location(lat=19.7233, lng=-155.0728, description="Wailoa Harbor"),
+        location=Location(lat=29.3053, lng=-94.7944, description="The Strand, Galveston, TX"),
         victims=[Victim(
             age_estimate=52, injuries=["laceration"],
             breathing=Breathing.SPONTANEOUS, perfusion=Perfusion.NORMAL,

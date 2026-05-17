@@ -52,7 +52,7 @@ def _get_or_create_sim(state) -> DisasterSimulator:
 
 class StartPayload(BaseModel):
     count: int = Field(default=200, ge=1, le=2000)
-    run_id: str = Field(default="hilo-1960", min_length=1, max_length=64)
+    run_id: str = Field(default="texas-gulf-flood", min_length=1, max_length=64)
     seed: int = 42
     demo_window_s: float = Field(default=60.0, gt=0.0)
 

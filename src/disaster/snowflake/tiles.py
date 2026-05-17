@@ -52,8 +52,8 @@ TILE_QUERIES: dict[str, str] = {
     "geographic_equity": """
         SELECT
             CASE
-                WHEN lat > 19.73 THEN 'NORTH'
-                WHEN lat < 19.71 THEN 'SOUTH'
+                WHEN lat > 29.31 THEN 'NORTH'
+                WHEN lat < 29.29 THEN 'SOUTH'
                 ELSE 'CENTRAL'
             END AS sector,
             AVG(eta_seconds) AS avg_eta
@@ -164,7 +164,7 @@ def _synthetic_tile(tile_name: str, incidents: list[IncidentReport]) -> list[dic
     if tile_name == "geographic_equity":
         by_sector: dict[str, list[float]] = defaultdict(list)
         for i in incidents:
-            sector = "NORTH" if i.location.lat > 19.73 else ("SOUTH" if i.location.lat < 19.71 else "CENTRAL")
+            sector = "NORTH" if i.location.lat > 29.31 else ("SOUTH" if i.location.lat < 29.29 else "CENTRAL")
             by_sector[sector].append(600.0 * (1.0 - i.priority_score))
         return [{"sector": s, "avg_eta": statistics.mean(v) if v else 0.0} for s, v in by_sector.items()]
 

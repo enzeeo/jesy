@@ -8,24 +8,24 @@ from httpx import ASGITransport, AsyncClient
 from disaster.app.deps import AppState
 from disaster.app.main import create_app
 from disaster.models import Severity
-from disaster.simulator import DisasterSimulator, generate_hilo_tsunami_profile
+from disaster.simulator import DisasterSimulator, generate_texas_flood_profile
 
 # ── Generator ────────────────────────────────────────────────────────────────
 
 def test_generates_requested_count():
-    events = generate_hilo_tsunami_profile(count=50)
+    events = generate_texas_flood_profile(count=50)
     assert len(events) == 50
 
 
 def test_deterministic_given_seed():
-    a = generate_hilo_tsunami_profile(count=10, seed=42)
-    b = generate_hilo_tsunami_profile(count=10, seed=42)
+    a = generate_texas_flood_profile(count=10, seed=42)
+    b = generate_texas_flood_profile(count=10, seed=42)
     assert [e.incident.severity for e in a] == [e.incident.severity for e in b]
     assert [e.external_id for e in a] == [e.external_id for e in b]
 
 
 def test_severity_distribution_approximately_matches_profile():
-    events = generate_hilo_tsunami_profile(count=500, seed=1)
+    events = generate_texas_flood_profile(count=500, seed=1)
     counts = {s: 0 for s in Severity}
     for e in events:
         counts[e.incident.severity] += 1
@@ -36,19 +36,19 @@ def test_severity_distribution_approximately_matches_profile():
 
 
 def test_coastal_weighting():
-    """All incidents land near the coastal corridor (lat near 19.73)."""
-    events = generate_hilo_tsunami_profile(count=100)
+    """All incidents land near the Galveston coastal corridor."""
+    events = generate_texas_flood_profile(count=100)
     for e in events:
-        assert 19.70 < e.incident.location.lat < 19.75
+        assert 29.27 < e.incident.location.lat < 29.33
 
 
 def test_external_ids_unique():
-    events = generate_hilo_tsunami_profile(count=200)
+    events = generate_texas_flood_profile(count=200)
     assert len({e.external_id for e in events}) == 200
 
 
 def test_emit_delays_monotonic_and_within_window():
-    events = generate_hilo_tsunami_profile(count=100, demo_window_s=60.0)
+    events = generate_texas_flood_profile(count=100, demo_window_s=60.0)
     delays = [e.delay_s for e in events]
     assert delays == sorted(delays)
     assert delays[0] >= 0.0

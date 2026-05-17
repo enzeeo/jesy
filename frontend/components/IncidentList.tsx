@@ -50,7 +50,7 @@ export function IncidentList({ incidents, flashing, selectedId, onSelect }: Prop
           <div className="flex h-full items-center justify-center text-center">
             <div>
               <div className="text-fg-secondary">Awaiting incidents.</div>
-              <div className="mono mt-2 text-xs text-fg-muted">{new Date().toISOString().slice(11, 19)} UTC</div>
+              <div className="mono mt-2 text-xs text-fg-muted">No active calls</div>
             </div>
           </div>
         ) : null}

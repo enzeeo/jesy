@@ -7,9 +7,10 @@ interface Props {
   incidentsCount: number;
   respondersCount: number;
   onAction: () => Promise<void> | void;
+  onOptimize: () => Promise<void> | void;
 }
 
-export function TopBar({ connected, incidentsCount, respondersCount, onAction }: Props) {
+export function TopBar({ connected, incidentsCount, respondersCount, onAction, onOptimize }: Props) {
   const [scenarios, setScenarios] = useState<Array<{ key: string; preview: string }>>([]);
   const [nowUtc, setNowUtc] = useState("--:--:--");
   const [pending, setPending] = useState<string | null>(null);
@@ -22,7 +23,7 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction }:
     return () => clearInterval(t);
   }, []);
 
-  async function run(label: string, fn: () => Promise<unknown>) {
+  async function run(label: string, fn: () => Promise<unknown> | unknown) {
     setPending(label);
     try {
       await fn();
@@ -36,7 +37,7 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction }:
     <div className="flex h-14 items-center justify-between border-b border-border-strong bg-bg-panel px-4">
       <div className="flex items-center gap-6">
         <div className="flex items-baseline gap-2">
-          <span className="mono text-base font-bold tracking-wide text-fg-primary">▲ HILO DISPATCH</span>
+          <span className="mono text-base font-bold tracking-wide text-fg-primary">▲ TEXAS DISPATCH</span>
         </div>
         <div className="mono flex items-baseline gap-4 text-xs text-fg-secondary">
           <span><span className="text-fg-primary">{respondersCount}</span> units</span>
@@ -51,7 +52,7 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction }:
       <div className="flex items-center gap-2">
         <TopBarButton label="Seed Responders" pending={pending} onClick={() => run("seed", api.seedResponders)} />
         <TopBarButton label="Start Sim" pending={pending} onClick={() => run("sim", () => api.simStart(200, 60))} />
-        <TopBarButton label="Optimize" pending={pending} onClick={() => run("optimize", api.optimize)} />
+        <TopBarButton label="Optimize" pending={pending} onClick={() => run("optimize", onOptimize)} />
         <TopBarButton label="Cortex Scan" pending={pending} onClick={() => run("cortex", api.cortexScan)} />
         <div className="mx-2 h-6 w-px bg-border-strong" />
         {scenarios.map((s) => (

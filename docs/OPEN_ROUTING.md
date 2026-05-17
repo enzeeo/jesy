@@ -172,7 +172,7 @@ The phone UI and dispatcher map both listen to the SSE feed.
 `GET /responders/{responder_id}/assignment` returns the active dispatch for the
 unit, if any. It includes:
 
-- `assignment_id` / `dispatch_id`.
+- `assignment_id`, which is the dispatch id for the active assignment.
 - `route_id`.
 - `leg_id`.
 - `responder_id`.

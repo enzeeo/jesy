@@ -122,7 +122,6 @@ export default function Dashboard() {
         ));
       }
       refresh();
-      refreshRouting();
     } else if (evt.type === "state_reset") {
       setIncidents([]); setResponders([]); setSelectedId(null);
       setRoutingResponse(null);
@@ -146,7 +145,6 @@ export default function Dashboard() {
         });
       }
       refresh();
-      refreshRouting();
     } else if (evt.type === "responder_arrived") {
       const data = evt.data as ResponderArrivedData;
       setResponders((prev) => prev.map((responder) =>
@@ -202,13 +200,13 @@ export default function Dashboard() {
         ));
       }
       if (response.routing_response) setRoutingResponse(response.routing_response);
-      await Promise.all([refresh(), refreshRouting()]);
+      await refresh();
     } catch (error) {
       setDispatchError(error instanceof Error ? error.message : "Dispatch failed.");
     } finally {
       setDispatchingKey(null);
     }
-  }, [refresh, refreshRouting]);
+  }, [refresh]);
 
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -221,6 +219,7 @@ export default function Dashboard() {
         incidentsCount={incidents.length}
         respondersCount={responders.length}
         onAction={refresh}
+        onOptimize={refreshRouting}
       />
 
       <div className="flex flex-1 overflow-hidden">

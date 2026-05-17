@@ -20,10 +20,10 @@ from disaster.models import (
 from disaster.snowflake.cortex import detect_clusters, detect_clusters_snowflake
 
 
-def _incident(injuries: list[str], lat: float = 19.74) -> IncidentReport:
+def _incident(injuries: list[str], lat: float = 29.32) -> IncidentReport:
     return IncidentReport(
         timestamp=datetime.now(UTC),
-        location=Location(lat=lat, lng=-155.09, description="x"),
+        location=Location(lat=lat, lng=-94.79, description="x"),
         victims=[Victim(injuries=injuries, mobility=Mobility.WALKING,
                         breathing=Breathing.SPONTANEOUS, perfusion=Perfusion.NORMAL)],
         severity=Severity.DELAYED,

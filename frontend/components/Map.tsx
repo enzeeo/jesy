@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
 import type {
   IncidentReport,
   RoadAccessFeatureCollection,
@@ -20,8 +19,8 @@ interface Props {
   onSelect: (id: string) => void;
 }
 
-// Hilo Bay center
-const HILO = { lng: -155.0900, lat: 19.7297, zoom: 13.5 };
+// Galveston, Texas demo center
+const TEXAS_DEMO_CENTER = { lng: -94.7977, lat: 29.3013, zoom: 12.7 };
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 
@@ -68,8 +67,8 @@ export function MapView({ incidents, responders, routingResponse, flashing, onSe
       map = new mapboxgl.Map({
         container: containerRef.current,
         style: "mapbox://styles/mapbox/dark-v11",
-        center: [HILO.lng, HILO.lat],
-        zoom: HILO.zoom,
+        center: [TEXAS_DEMO_CENTER.lng, TEXAS_DEMO_CENTER.lat],
+        zoom: TEXAS_DEMO_CENTER.zoom,
         attributionControl: false,
       });
     } catch (err) {

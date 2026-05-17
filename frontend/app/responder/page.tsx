@@ -13,7 +13,7 @@ import type {
   RouteLeg,
 } from "@/lib/types";
 
-const DEFAULT_LOCATION = { lat: 19.7297, lng: -155.09, description: "Hilo demo" };
+const DEFAULT_LOCATION = { lat: 29.3013, lng: -94.7977, description: "Galveston demo" };
 
 function formatEta(seconds?: number | null): string {
   if (seconds == null) return "--";
