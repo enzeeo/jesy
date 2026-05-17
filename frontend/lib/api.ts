@@ -2,10 +2,21 @@
 
 const BASE = "/api";
 
-async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+// Backend base URL for endpoints that bypass the Next.js rewrite. The dev
+// rewrite proxies via Node fetch with a ~30s timeout, which breaks long-
+// running endpoints (/routing/optimize takes 60-90s under Mapbox load).
+// SSE already bypasses for the same reason (see lib/useSSE.ts).
+const DIRECT_BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
+
+async function jsonFetch<T>(
+  path: string,
+  init?: RequestInit & { direct?: boolean },
+): Promise<T> {
+  const { direct, ...fetchInit } = init ?? {};
+  const url = direct && DIRECT_BACKEND ? `${DIRECT_BACKEND}${path}` : `${BASE}${path}`;
+  const res = await fetch(url, {
+    ...fetchInit,
+    headers: { "Content-Type": "application/json", ...(fetchInit?.headers || {}) },
   });
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return (await res.json()) as T;
@@ -21,7 +32,7 @@ export const api = {
       body: JSON.stringify({ severity, reason }),
     }),
   // Responders + routing
-  optimize: () => jsonFetch<import("./types").RoutingResponse>("/routing/optimize", { method: "POST" }),
+  optimize: () => jsonFetch<import("./types").RoutingResponse>("/routing/optimize", { method: "POST", direct: true }),
   roadAccess: () => jsonFetch<import("./types").RoadAccessSummary>("/routing/road-access"),
   blockedRoads: () => jsonFetch<import("./types").BlockedRoadsResponse>("/routing/blocked-roads"),
   startDispatch: (payload: import("./types").StartDispatchRequest) =>

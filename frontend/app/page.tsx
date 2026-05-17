@@ -221,6 +221,7 @@ export default function Dashboard() {
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [acceptedRoutes, setAcceptedRoutes] = useState<Record<string, AcceptedRoute>>({});
   const lastLocalOptimizeAtRef = useRef(0);
+  const optimizeInFlightRef = useRef<Promise<RoutingResponse | null> | null>(null);
   const trackingTimersRef = useRef<Map<string, TrackingTimerState>>(new Map());
   const { flashing, register } = useSeverityFlash();
 
@@ -235,9 +236,22 @@ export default function Dashboard() {
   }, []);
 
   const refreshRouting = useCallback(async () => {
+    // Optimize legitimately takes 60-90s under Mapbox load. If a call is
+    // already in flight, collapse new triggers (SSE handlers, button spam,
+    // initial mount) into the existing promise instead of stacking them.
+    if (optimizeInFlightRef.current) {
+      await optimizeInFlightRef.current;
+      return;
+    }
     lastLocalOptimizeAtRef.current = Date.now();
-    const routing = await api.optimize().catch(() => null);
-    if (routing) setRoutingResponse(routing);
+    const promise = api.optimize().catch(() => null);
+    optimizeInFlightRef.current = promise;
+    try {
+      const routing = await promise;
+      if (routing) setRoutingResponse(routing);
+    } finally {
+      optimizeInFlightRef.current = null;
+    }
   }, []);
 
   const refreshRoadAccess = useCallback(async () => {
