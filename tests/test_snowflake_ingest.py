@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 
 import disaster.snowflake.ingest as ingest
 from disaster.road_access import demo_road_access
-from disaster.snowflake.ingest import emit_cortex_alert, emit_incident
-from disaster.snowflake.tables import SCHEMA_CLEAN, SCHEMA_RAW, SCHEMA_SERVING
+from disaster.snowflake.ingest import emit_agent_run, emit_cortex_alert, emit_incident
+from disaster.snowflake.tables import SCHEMA_AGENT, SCHEMA_CLEAN, SCHEMA_RAW, SCHEMA_SERVING
 from disaster.snowflake.writer import SnowflakeWriter
 
 
@@ -89,3 +89,28 @@ async def test_emit_cortex_alert_serializes_datetime_in_payload():
     row = collected[f"{SCHEMA_SERVING}.CORTEX_ALERTS"][0]
     payload = json.loads(row["PAYLOAD"])
     assert payload["detected_at"] == detected.isoformat()
+
+
+async def test_emit_agent_run_serializes_payloads():
+    collected: dict[str, list] = {}
+
+    async def collect(table, rows):
+        collected.setdefault(table, []).extend(rows)
+
+    writer = SnowflakeWriter(collect, flush_interval_s=0.05, batch_size=1)
+    await writer.start()
+    emit_agent_run(
+        writer,
+        run_id="run-1",
+        agent_name="Cluster Monitor",
+        input_payload={"source": "test"},
+        output_payload={"severity": "warning", "evidence": [{"h3_res8": "8844"}]},
+        tool_calls=[{"name": "query_live_clusters"}],
+    )
+    await writer.stop(0.5)
+
+    row = collected[f"{SCHEMA_AGENT}.AGENT_RUNS"][0]
+    assert row["RUN_ID"] == "run-1"
+    assert json.loads(row["INPUT_PAYLOAD"]) == {"source": "test"}
+    assert json.loads(row["OUTPUT_PAYLOAD"])["severity"] == "warning"
+    assert json.loads(row["TOOL_CALLS"])[0]["name"] == "query_live_clusters"

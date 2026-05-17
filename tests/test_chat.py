@@ -1,6 +1,7 @@
 """Chat API — Snowflake-off fallback path."""
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from httpx import ASGITransport, AsyncClient
@@ -16,6 +17,7 @@ from disaster.models import (
     Severity,
     Victim,
 )
+from disaster.snowflake.chat_backend import ChatContext, SqlGroundedCortexChatBackend
 
 
 def _incident() -> IncidentReport:
@@ -94,3 +96,29 @@ async def test_chat_refuses_clinical_advice():
 
     assert r.status_code == 200
     assert "cannot provide diagnosis" in r.json()["reply"]["content"].lower()
+
+
+async def test_sql_chat_includes_latest_live_ops_agent_runs():
+    async def fake_runner(sql: str, _params: tuple):
+        if "AGENT_RUNS" in sql:
+            return [{
+                "RUN_ID": "ops-1",
+                "AGENT_NAME": "Supervisor Agent",
+                "OUTPUT_PAYLOAD": json.dumps({
+                    "severity": "warning",
+                    "summary": "Cluster monitor is warning; resource gap monitor is info.",
+                }),
+                "STARTED_AT": "2026-05-17T12:00:00+00:00",
+            }]
+        return []
+
+    backend = SqlGroundedCortexChatBackend(fake_runner)
+    reply = await backend.reply(
+        "What is live ops seeing?",
+        context=ChatContext(),
+        history=[],
+    )
+
+    assert "live ops agents" in reply.content.lower()
+    assert "supervisor agent warning" in reply.content.lower()
+    assert any(source.query_id == "latest_agent_runs" for source in reply.sources)

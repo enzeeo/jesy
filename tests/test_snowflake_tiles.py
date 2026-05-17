@@ -11,6 +11,7 @@ from disaster.models import (
     Breathing,
     IncidentReport,
     IncidentSource,
+    IncidentStatus,
     Location,
     Mobility,
     Perfusion,
@@ -21,7 +22,14 @@ from disaster.snowflake import TILE_QUERIES
 from disaster.snowflake.tiles import _synthetic_tile
 
 
-def _incident(sev: Severity, *, lat: float = 29.30, conf: float = 0.95, source: IncidentSource = IncidentSource.VOICE) -> IncidentReport:
+def _incident(
+    sev: Severity,
+    *,
+    lat: float = 29.30,
+    conf: float = 0.95,
+    source: IncidentSource = IncidentSource.VOICE,
+    status: IncidentStatus = IncidentStatus.NEW,
+) -> IncidentReport:
     return IncidentReport(
         timestamp=datetime.now(UTC),
         location=Location(lat=lat, lng=-94.79, description="x"),
@@ -30,6 +38,7 @@ def _incident(sev: Severity, *, lat: float = 29.30, conf: float = 0.95, source: 
         severity=sev,
         confidence=conf,
         source=source,
+        status=status,
         priority_score=0.7 if sev == Severity.IMMEDIATE else 0.4,
     )
 
@@ -38,6 +47,22 @@ def _incident(sev: Severity, *, lat: float = 29.30, conf: float = 0.95, source: 
 
 def test_severity_distribution_counts_all_severities():
     incidents = [_incident(Severity.IMMEDIATE), _incident(Severity.IMMEDIATE), _incident(Severity.MINOR)]
+    rows = _synthetic_tile("severity_distribution", incidents)
+    by_sev = {r["severity"]: r["n"] for r in rows}
+    assert by_sev["Immediate"] == 2
+    assert by_sev["Minor"] == 1
+    assert by_sev["Delayed"] == 0
+    assert by_sev["Deceased"] == 0
+
+
+def test_severity_distribution_counts_only_active_incidents():
+    incidents = [
+        _incident(Severity.IMMEDIATE, status=IncidentStatus.NEW),
+        _incident(Severity.IMMEDIATE, status=IncidentStatus.EN_ROUTE),
+        _incident(Severity.MINOR, status=IncidentStatus.PARTIAL),
+        _incident(Severity.DELAYED, status=IncidentStatus.ON_SCENE),
+        _incident(Severity.DECEASED, status=IncidentStatus.RESOLVED),
+    ]
     rows = _synthetic_tile("severity_distribution", incidents)
     by_sev = {r["severity"]: r["n"] for r in rows}
     assert by_sev["Immediate"] == 2
@@ -100,8 +125,30 @@ async def test_tile_endpoint_returns_in_memory_when_no_snowflake():
         assert r.status_code == 200
         body = r.json()
         assert body["tile"] == "severity_distribution"
-        assert body["source"] == "in_memory"
+        assert body["source"] == "app_state"
         assert any(row["severity"] == "Immediate" and row["n"] == 1 for row in body["rows"])
+
+
+async def test_severity_tile_uses_active_app_state_even_with_snowflake_runner():
+    state = AppState()
+    app = create_app(state=state)
+    await state.incidents.insert(_incident(Severity.IMMEDIATE, status=IncidentStatus.NEW))
+    await state.incidents.insert(_incident(Severity.DELAYED, status=IncidentStatus.RESOLVED))
+
+    async def fake_runner(_sql, _params):
+        return [{"severity": "Delayed", "n": 99}]
+
+    state._sf_query_runner = fake_runner
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        r = await ac.get("/snowflake/tile/severity_distribution")
+        body = r.json()
+
+    by_sev = {row["severity"]: row["n"] for row in body["rows"]}
+    assert body["source"] == "app_state"
+    assert by_sev["Immediate"] == 1
+    assert by_sev["Delayed"] == 0
 
 
 async def test_tile_endpoint_unknown_tile_404():
@@ -134,7 +181,7 @@ async def test_tile_with_mock_runner_returns_snowflake_source():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.get("/snowflake/tile/severity_distribution")
+        r = await ac.get("/snowflake/tile/incident_rate")
         body = r.json()
         assert body["source"] == "snowflake"
         assert body["rows"] == [{"severity": "Immediate", "n": 99}]

@@ -42,6 +42,8 @@ export const api = {
     }),
   responderAssignment: (id: string) =>
     jsonFetch<import("./types").ResponderAssignment | null>(`/responders/${id}/assignment`).catch(() => null),
+  activeResponderAssignments: () =>
+    jsonFetch<import("./types").ActiveResponderAssignment[]>("/responders/assignments"),
   completeResponderAssignment: (id: string, payload: import("./types").CompleteAssignmentRequest) =>
     jsonFetch<import("./types").CompleteAssignmentResponse>(`/responders/${id}/assignment/complete`, {
       method: "POST",
@@ -53,9 +55,10 @@ export const api = {
       body: JSON.stringify(ping),
     }),
   // Snowflake tiles
-  tile: (name: string) => jsonFetch<{ tile: string; source: string; rows: any[] }>(`/snowflake/tile/${name}`),
+  tile: (name: string) => jsonFetch<import("./types").SnowflakeTileResponse>(`/snowflake/tile/${name}`),
+  ops: () => jsonFetch<import("./types").AgentOpsResponse>("/snowflake/ops", { cache: "no-store" }),
   // Cortex
-  cortexScan: () => jsonFetch<{ alerts: any[]; emitted_count: number }>(`/cortex/scan`, { method: "POST" }),
+  cortexScan: () => jsonFetch<{ alerts: any[]; emitted_count: number; source?: string }>(`/cortex/scan`, { method: "POST" }),
   cortexReassess: (id: string) =>
     jsonFetch<import("./types").CortexReassessResponse>(`/cortex/reassess/${id}`, { method: "POST" }),
   // Dispatch chat

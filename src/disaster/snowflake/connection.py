@@ -86,10 +86,18 @@ def _coerce_value(col: str, value: Any) -> Any:
 
 
 def _insert_placeholders(cols: list[str]) -> str:
-    """Snowflake executemany cannot bind dict/list into VARIANT — use PARSE_JSON on JSON text."""
+    """Snowflake executemany cannot bind dict/list into VARIANT; parse JSON text."""
     return ", ".join(
         "PARSE_JSON(%s)" if col in _VARIANT_JSON_COLUMNS else "%s"
         for col in cols
+    )
+
+
+def _insert_sql(fqn: str, cols: list[str]) -> str:
+    """Build an INSERT that permits PARSE_JSON bind expressions in Snowflake."""
+    return (
+        f'INSERT INTO {fqn} ({", ".join(cols)}) '
+        f"SELECT {_insert_placeholders(cols)}"
     )
 
 
@@ -241,10 +249,7 @@ def build_snowflake_flush() -> Callable[[str, list[dict[str, Any]]], Awaitable[N
                 _flush_victims(cur, fqn, rows)
             else:
                 cols = TABLE_COLUMNS[table_key]
-                sql = (
-                    f'INSERT INTO {fqn} ({", ".join(cols)}) '
-                    f"VALUES ({_insert_placeholders(cols)})"
-                )
+                sql = _insert_sql(fqn, cols)
                 params_list = [_row_to_columns(table_key, r) for r in rows]
                 cur.executemany(sql, params_list)
         finally:

@@ -16,6 +16,11 @@ CREATE SCHEMA IF NOT EXISTS DISASTER_DB.AGENT;
 
 USE DATABASE DISASTER_DB;
 
+-- Rebuild derived live dynamic tables when their definitions change.
+-- Drop dependents first, then recreate in the normal init order below.
+DROP DYNAMIC TABLE IF EXISTS DISASTER_DB.SERVING.LIVE_RESOURCE_GAPS;
+DROP DYNAMIC TABLE IF EXISTS DISASTER_DB.FEATURES.LIVE_H3_CLUSTER_WINDOWS;
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- RAW
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -210,6 +215,32 @@ CREATE TABLE IF NOT EXISTS ROUTE_COVERAGE (
     H3_CELLS_RES8       VARIANT
 );
 
+CREATE DYNAMIC TABLE IF NOT EXISTS LIVE_INCIDENT_H3
+    TARGET_LAG = '1 minute'
+    WAREHOUSE = {{SNOWFLAKE_WAREHOUSE}}
+    CLUSTER BY (H3_RES8, SECTOR_ID, INCIDENT_MINUTE)
+AS
+SELECT
+    INCIDENT_ID,
+    DATE_TRUNC('minute', TIMESTAMP) AS INCIDENT_MINUTE,
+    TIMESTAMP AS INCIDENT_TIMESTAMP,
+    LAT,
+    LNG,
+    TO_VARCHAR(H3_LATLNG_TO_CELL(LAT, LNG, 8)) AS H3_RES8,
+    CASE
+        WHEN LAT > 35.61 THEN 'NORTH'
+        WHEN LAT < 35.57 THEN 'SOUTH'
+        ELSE 'CENTRAL'
+    END AS SECTOR_ID,
+    SEVERITY,
+    STATUS,
+    PRIORITY_SCORE,
+    SIM_RUN_ID,
+    LAST_UPDATED_AT
+FROM DISASTER_DB.CLEAN.INCIDENTS
+WHERE LAT IS NOT NULL
+  AND LNG IS NOT NULL;
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- FEATURES (populated by Snowflake tasks / dynamic tables in production)
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -251,6 +282,86 @@ CREATE TABLE IF NOT EXISTS FEEDBACK_FEATURES (
     LABEL               VARCHAR(32),
     DECIDED_AT          TIMESTAMP_TZ
 );
+
+CREATE DYNAMIC TABLE IF NOT EXISTS LIVE_H3_CLUSTER_WINDOWS
+    TARGET_LAG = '1 minute'
+    WAREHOUSE = {{SNOWFLAKE_WAREHOUSE}}
+    CLUSTER BY (H3_RES8, SECTOR_ID, WINDOW_END)
+AS
+SELECT
+    CONCAT(H3_RES8, ':', SECTOR_ID) AS CLUSTER_WINDOW_ID,
+    H3_RES8,
+    SECTOR_ID,
+    MIN(INCIDENT_MINUTE) AS WINDOW_START,
+    MAX(INCIDENT_MINUTE) AS WINDOW_END,
+    COUNT(*) AS OPEN_INCIDENTS,
+    COUNT_IF(STATUS IN ('new', 'dispatched', 'en_route', 'partial')) AS ACTIVE_INCIDENTS,
+    COUNT_IF(SEVERITY = 'Immediate') AS IMMEDIATE_COUNT,
+    COUNT_IF(SEVERITY = 'Delayed') AS DELAYED_COUNT,
+    COUNT_IF(SEVERITY = 'Minor') AS MINOR_COUNT,
+    MAX(PRIORITY_SCORE) AS MAX_PRIORITY_SCORE,
+    AVG(PRIORITY_SCORE) AS AVG_PRIORITY_SCORE,
+    LISTAGG(INCIDENT_ID, ',') WITHIN GROUP (ORDER BY PRIORITY_SCORE DESC) AS INCIDENT_IDS
+FROM DISASTER_DB.GEO.LIVE_INCIDENT_H3
+WHERE STATUS IN ('new', 'dispatched', 'en_route', 'partial')
+GROUP BY H3_RES8, SECTOR_ID;
+
+CREATE DYNAMIC TABLE IF NOT EXISTS LIVE_ROUTE_STATUS
+    TARGET_LAG = '1 minute'
+    WAREHOUSE = {{SNOWFLAKE_WAREHOUSE}}
+    CLUSTER BY (ROUTE_ID, RESPONDER_ID, LAST_EVENT_AT)
+AS
+WITH latest_dispatch AS (
+    SELECT
+        ROUTE_ID,
+        LEG_ID,
+        RESPONDER_ID,
+        INCIDENT_ID,
+        STATUS AS DISPATCH_STATUS,
+        STARTED_AT,
+        ETA_SECONDS
+    FROM DISASTER_DB.SERVING.RESPONDER_DISPATCHES
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY RESPONDER_ID, COALESCE(ROUTE_ID, ''), COALESCE(LEG_ID, '')
+        ORDER BY STARTED_AT DESC
+    ) = 1
+),
+latest_ping AS (
+    SELECT
+        RESPONDER_ID,
+        ROUTE_ID,
+        LEG_ID,
+        LAT,
+        LNG,
+        TIMESTAMP AS LAST_PING_AT
+    FROM DISASTER_DB.SERVING.RESPONDER_LOCATION_PINGS
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY RESPONDER_ID, COALESCE(ROUTE_ID, ''), COALESCE(LEG_ID, '')
+        ORDER BY TIMESTAMP DESC
+    ) = 1
+)
+SELECT
+    COALESCE(latest_dispatch.ROUTE_ID, latest_ping.ROUTE_ID) AS ROUTE_ID,
+    COALESCE(latest_dispatch.LEG_ID, latest_ping.LEG_ID) AS LEG_ID,
+    COALESCE(latest_dispatch.RESPONDER_ID, latest_ping.RESPONDER_ID) AS RESPONDER_ID,
+    latest_dispatch.INCIDENT_ID,
+    latest_dispatch.DISPATCH_STATUS,
+    latest_dispatch.STARTED_AT,
+    latest_dispatch.ETA_SECONDS,
+    latest_ping.LAT AS LAST_LAT,
+    latest_ping.LNG AS LAST_LNG,
+    latest_ping.LAST_PING_AT,
+    COALESCE(latest_ping.LAST_PING_AT, latest_dispatch.STARTED_AT) AS LAST_EVENT_AT,
+    DATEDIFF(
+        second,
+        latest_dispatch.STARTED_AT,
+        COALESCE(latest_ping.LAST_PING_AT, latest_dispatch.STARTED_AT)
+    ) AS AGE_SECONDS
+FROM latest_dispatch
+FULL OUTER JOIN latest_ping
+  ON latest_dispatch.RESPONDER_ID = latest_ping.RESPONDER_ID
+ AND COALESCE(latest_dispatch.ROUTE_ID, '') = COALESCE(latest_ping.ROUTE_ID, '')
+ AND COALESCE(latest_dispatch.LEG_ID, '') = COALESCE(latest_ping.LEG_ID, '');
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SERVING
@@ -384,6 +495,57 @@ CREATE TABLE IF NOT EXISTS RESPONDER_LOCATION_PINGS (
     LEG_ID              VARCHAR(128)
 );
 
+CREATE DYNAMIC TABLE IF NOT EXISTS LIVE_RESOURCE_GAPS
+    TARGET_LAG = '1 minute'
+    WAREHOUSE = {{SNOWFLAKE_WAREHOUSE}}
+    CLUSTER BY (SECTOR_ID, H3_RES8, COMPUTED_AT)
+AS
+WITH responder_h3 AS (
+    SELECT
+        TO_VARCHAR(H3_LATLNG_TO_CELL(LAT, LNG, 8)) AS H3_RES8,
+        COUNT_IF(STATUS = 'idle') AS AVAILABLE_RESPONDERS
+    FROM DISASTER_DB.CLEAN.RESPONDERS
+    WHERE LAT IS NOT NULL
+      AND LNG IS NOT NULL
+    GROUP BY H3_RES8
+),
+open_area_clusters AS (
+    SELECT
+        CLUSTER_WINDOW_ID,
+        H3_RES8,
+        SECTOR_ID,
+        WINDOW_END,
+        OPEN_INCIDENTS,
+        IMMEDIATE_COUNT,
+        DELAYED_COUNT,
+        MAX_PRIORITY_SCORE
+    FROM DISASTER_DB.FEATURES.LIVE_H3_CLUSTER_WINDOWS
+)
+SELECT
+    CLUSTER_WINDOW_ID AS GAP_ID,
+    open_area_clusters.H3_RES8,
+    SECTOR_ID,
+    WINDOW_END AS COMPUTED_AT,
+    OPEN_INCIDENTS,
+    IMMEDIATE_COUNT,
+    DELAYED_COUNT,
+    COALESCE(responder_h3.AVAILABLE_RESPONDERS, 0) AS AVAILABLE_RESPONDERS,
+    GREATEST(
+        (IMMEDIATE_COUNT + DELAYED_COUNT) - COALESCE(responder_h3.AVAILABLE_RESPONDERS, 0),
+        0
+    ) AS GAP_SCORE,
+    MAX_PRIORITY_SCORE,
+    CASE
+        WHEN GREATEST(
+            (IMMEDIATE_COUNT + DELAYED_COUNT) - COALESCE(responder_h3.AVAILABLE_RESPONDERS, 0),
+            0
+        ) > 0 THEN 'Review nearby idle units and rerun route optimization.'
+        ELSE 'Coverage acceptable. Continue monitoring.'
+    END AS RECOMMENDATION
+FROM open_area_clusters
+LEFT JOIN responder_h3
+  ON open_area_clusters.H3_RES8 = responder_h3.H3_RES8;
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- AGENT (command center / enrichment — DDL ready for future features)
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -481,3 +643,6 @@ SHOW SCHEMAS IN DATABASE DISASTER_DB;
 SHOW TABLES IN SCHEMA DISASTER_DB.RAW;
 SHOW TABLES IN SCHEMA DISASTER_DB.CLEAN;
 SHOW TABLES IN SCHEMA DISASTER_DB.SERVING;
+SHOW DYNAMIC TABLES IN SCHEMA DISASTER_DB.GEO;
+SHOW DYNAMIC TABLES IN SCHEMA DISASTER_DB.FEATURES;
+SHOW DYNAMIC TABLES IN SCHEMA DISASTER_DB.SERVING;

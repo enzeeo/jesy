@@ -30,8 +30,8 @@ from disaster.app.routes.demo import router as demo_router
 from disaster.app.routes.events import router as events_router
 from disaster.app.routes.incidents import router as incidents_router
 from disaster.app.routes.intake import router as intake_router
-from disaster.app.routes.responders import router as responders_router
 from disaster.app.routes.intake_tools import router as intake_tools_router
+from disaster.app.routes.responders import router as responders_router
 from disaster.app.routes.routing import router as routing_router
 from disaster.app.routes.sim import router as sim_router
 from disaster.app.routes.tiles import router as tiles_router
@@ -43,6 +43,7 @@ from disaster.snowflake import (
     env_configured,
     get_query_runner,
 )
+from disaster.snowflake.live_ops import LiveOpsScheduler
 
 # Load .env from project root if present. Safe to call multiple times; safe in tests.
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -77,6 +78,11 @@ def create_app(
         try:
             state.snowflake = SnowflakeWriter(build_snowflake_flush())
             state._sf_query_runner = get_query_runner()
+            if state._sf_query_runner is not None:
+                state.live_ops_scheduler = LiveOpsScheduler(
+                    runner=state._sf_query_runner,
+                    writer=state.snowflake,
+                )
             log.info("snowflake: connected and ready for tile queries")
         except Exception as e:  # noqa: BLE001
             log.warning("snowflake: connect failed (%s) — using noop writer + in-memory tiles", e)
@@ -103,9 +109,15 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if state.snowflake is not None:
             await state.snowflake.start()
+        if state.live_ops_scheduler is not None:
+            await state.live_ops_scheduler.start()
         try:
             yield
         finally:
+            if state.dispatch_movement is not None:
+                await state.dispatch_movement.cancel_all()
+            if state.live_ops_scheduler is not None:
+                await state.live_ops_scheduler.stop()
             if state.snowflake is not None:
                 await state.snowflake.stop(drain_timeout_s=60.0)
             completion = getattr(state, "_llm_completion", None)

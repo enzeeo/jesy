@@ -1,6 +1,7 @@
 """Tests for greedy + VRP routing (Phase C)."""
 from __future__ import annotations
 
+import asyncio
 import math
 
 import pytest
@@ -55,6 +56,13 @@ def clear_live_route_provider_tokens(monkeypatch):
     monkeypatch.setenv("NEXT_PUBLIC_MAPBOX_TOKEN", "")
     monkeypatch.setenv("OPENROUTESERVICE_API_KEY", "")
     monkeypatch.delenv("OPENROUTESERVICE_LIVE_ROUTING", raising=False)
+
+
+async def _next_event_of_type(event_stream, event_type: str, *, timeout: float = 1.0) -> dict:
+    event = await asyncio.wait_for(event_stream.__anext__(), timeout=timeout)
+    while event["type"] != event_type:
+        event = await asyncio.wait_for(event_stream.__anext__(), timeout=timeout)
+    return event
 
 
 # ── Greedy ───────────────────────────────────────────────────────────────────
@@ -667,6 +675,108 @@ async def test_start_dispatch_rejects_unknown_route_and_assignment_endpoint_retu
         assert payload["leg_id"] == leg_id
         assert payload["responder_id"] == str(responder.id)
         assert payload["status"] == "en_route"
+
+
+async def test_active_assignments_endpoint_returns_route_hydration_payload():
+    from httpx import ASGITransport, AsyncClient
+
+    from disaster.app.deps import AppState
+    from disaster.app.main import create_app
+
+    state = AppState()
+    state.dispatch_movement = None
+    responder = await state.responders.upsert(_responder("ALS-1", 19.70, -155.00))
+    incident = await state.incidents.insert(_incident(19.71, -155.01, priority=0.8))
+    app = create_app(state=state)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        optimized = (await client.post("/routing/optimize")).json()
+        leg_id = optimized["routes"][str(responder.id)][0]["leg_id"]
+        started = await client.post(
+            "/routing/dispatches/start",
+            json={
+                "route_id": optimized["route_id"],
+                "leg_id": leg_id,
+                "started_by": "dispatcher-a",
+            },
+        )
+        assignments = await client.get("/responders/assignments")
+
+    assert started.status_code == 200
+    assert assignments.status_code == 200
+    rows = assignments.json()
+    assert len(rows) == 1
+    assert rows[0]["assignment_id"] == started.json()["dispatch_id"]
+    assert rows[0]["responder_id"] == str(responder.id)
+    assert rows[0]["incident_id"] == str(incident.id)
+    assert rows[0]["route_leg"]["leg_id"] == leg_id
+    assert rows[0]["responder"]["id"] == str(responder.id)
+    assert rows[0]["incident"]["id"] == str(incident.id)
+
+
+async def test_start_dispatch_schedules_server_owned_movement_and_arrival():
+    from httpx import ASGITransport, AsyncClient
+
+    from disaster.app.deps import AppState
+    from disaster.app.main import create_app
+    from disaster.models import IncidentStatus
+    from disaster.movement import DispatchMovementService
+
+    state = AppState()
+    state.dispatch_movement = DispatchMovementService(
+        state=state,
+        interval_s=0.01,
+        route_steps=2,
+        final_dwell_pings=2,
+    )
+    responder = await state.responders.upsert(_responder("ALS-1", 19.70, -155.00))
+    incident = await state.incidents.insert(_incident(19.701, -155.001, priority=0.8))
+    app = create_app(state=state)
+    transport = ASGITransport(app=app)
+    event_stream = state.events.subscribe()
+
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            optimized = (await client.post("/routing/optimize")).json()
+            leg_id = optimized["routes"][str(responder.id)][0]["leg_id"]
+            started = await client.post(
+                "/routing/dispatches/start",
+                json={
+                    "route_id": optimized["route_id"],
+                    "leg_id": leg_id,
+                    "started_by": "dispatcher-a",
+                },
+            )
+            assert started.status_code == 200
+
+            location_event = await _next_event_of_type(
+                event_stream,
+                "responder_location_updated",
+                timeout=1.0,
+            )
+            arrival_event = await _next_event_of_type(
+                event_stream,
+                "responder_arrived",
+                timeout=1.0,
+            )
+
+        assert location_event["data"]["responder_id"] == str(responder.id)
+        assert location_event["data"]["assignment"]["assignment_id"] == started.json()["dispatch_id"]
+        assert location_event["data"]["route_progress"] > 0
+        assert location_event["data"]["remaining_route_geometry"]["type"] == "LineString"
+        assert arrival_event["data"]["responder_id"] == str(responder.id)
+        assert arrival_event["data"]["incident_id"] == str(incident.id)
+
+        updated_responder = await state.responders.get(responder.id)
+        updated_incident = await state.incidents.get(incident.id)
+        assert updated_responder is not None
+        assert updated_responder.status == ResponderStatus.ON_SCENE
+        assert updated_incident is not None
+        assert updated_incident.status == IncidentStatus.ON_SCENE
+    finally:
+        await state.dispatch_movement.cancel_all()
+        await event_stream.aclose()
 
 
 async def test_start_dispatch_rebases_stale_leg_to_current_responder_location():

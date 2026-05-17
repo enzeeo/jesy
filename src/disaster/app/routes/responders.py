@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from disaster.models import IncidentStatus, Location, ResponderStatus
-from disaster.routing.greedy import _haversine_km
+from disaster.movement import record_responder_location, serialize_active_dispatch
 
 if TYPE_CHECKING:
     from disaster.app.deps import AppState
@@ -34,6 +34,19 @@ def _state(req: Request) -> AppState:
     return req.app.state.disaster
 
 
+@router.get("/assignments")
+async def list_responder_assignments(request: Request) -> list[dict[str, Any]]:
+    """Return all active human-started dispatches for frontend hydration."""
+
+    state = _state(request)
+    assignments: list[dict[str, Any]] = []
+    for dispatch in await state.active_dispatches.list():
+        assignment = await serialize_active_dispatch(state, dispatch)
+        if assignment is not None:
+            assignments.append(assignment)
+    return assignments
+
+
 @router.post("/{responder_id}/location")
 async def update_responder_location(
     responder_id: UUID,
@@ -48,128 +61,15 @@ async def update_responder_location(
         raise HTTPException(status_code=404, detail=f"responder {responder_id} not found")
 
     location = Location(lat=ping.lat, lng=ping.lng, description="phone ping")
-    updated_responder = responder.model_copy(update={"location": location})
-    await state.responders.upsert(updated_responder)
-
-    active_dispatch = await state.active_dispatches.get_for_responder(responder_id)
-    if state.snowflake is not None:
-        from disaster.snowflake import ingest
-        ingest.emit_location_ping(
-            state.snowflake,
-            responder_id=str(responder_id),
-            lat=ping.lat,
-            lng=ping.lng,
-            accuracy_m=ping.accuracy_m,
-            timestamp=ping.timestamp,
-            assigned_incident_id=str(updated_responder.assigned_incident_id)
-            if updated_responder.assigned_incident_id
-            else None,
-            route_id=active_dispatch.route_id if active_dispatch else None,
-            leg_id=active_dispatch.leg_id if active_dispatch else None,
-            status=updated_responder.status.value,
-            speed_mps=ping.speed_mps,
-            heading=ping.heading,
-        )
-
-    await state.events.publish({
-        "type": "responder_location_updated",
-        "data": {
-            "responder_id": str(responder_id),
-            "responder": updated_responder.model_dump(mode="json"),
-            "callsign": updated_responder.callsign,
-            "status": updated_responder.status.value,
-            "location": location.model_dump(),
-            "accuracy_m": ping.accuracy_m,
-            "timestamp": ping.timestamp.isoformat(),
-            "speed_mps": ping.speed_mps,
-            "heading": ping.heading,
-        },
-        "sequence_id": state.events.next_sequence_id(),
-    })
-
-    incident_id = updated_responder.assigned_incident_id
-    if incident_id is None:
-        return {
-            "responder_id": str(responder_id),
-            "arrival_detected": False,
-            "incident_id": None,
-        }
-
-    incident = await state.incidents.get(incident_id)
-    if incident is None:
-        return {
-            "responder_id": str(responder_id),
-            "arrival_detected": False,
-            "incident_id": str(incident_id),
-            "warning": "assigned incident not found",
-        }
-
-    distance_m = _haversine_km(
-        (location.lat, location.lng),
-        (incident.location.lat, incident.location.lng),
-    ) * 1000.0
-    detection = state.responder_tracking.record_ping(
+    return await record_responder_location(
+        state,
         responder_id=responder_id,
-        incident_id=incident.id,
+        location=location,
         timestamp=ping.timestamp,
-        distance_m=distance_m,
+        accuracy_m=ping.accuracy_m,
+        speed_mps=ping.speed_mps,
+        heading=ping.heading,
     )
-
-    if not detection.arrival_detected:
-        return {
-            "responder_id": str(responder_id),
-            "arrival_detected": False,
-            "incident_id": str(incident.id),
-            "distance_m": detection.distance_m,
-        }
-
-    on_scene_responder = updated_responder.model_copy(update={"status": ResponderStatus.ON_SCENE})
-    await state.responders.upsert(on_scene_responder)
-    on_scene_incident = incident.model_copy(update={"status": IncidentStatus.ON_SCENE})
-    await state.incidents.update(on_scene_incident)
-    active_dispatch = await state.active_dispatches.get_for_responder(responder_id)
-
-    snowflake_row = {
-        "responder_id": str(on_scene_responder.id),
-        "callsign": on_scene_responder.callsign,
-        "incident_id": str(incident.id),
-        "cluster_id": None,
-        "arrival_timestamp": ping.timestamp.isoformat(),
-        "ping_lat": ping.lat,
-        "ping_lng": ping.lng,
-        "accuracy_m": ping.accuracy_m,
-        "route_id": active_dispatch.route_id if active_dispatch is not None else None,
-        "assignment_id": active_dispatch.dispatch_id if active_dispatch is not None else str(incident.id),
-        "detection_method": detection.detection_method,
-        "distance_m": detection.distance_m,
-    }
-    if state.snowflake is not None:
-        from disaster.snowflake import ingest
-        ingest.emit_arrival(state.snowflake, snowflake_row)
-
-    await state.events.publish({
-        "type": "responder_arrived",
-        "data": {
-            "responder_id": str(responder_id),
-            "responder": on_scene_responder.model_dump(mode="json"),
-            "callsign": on_scene_responder.callsign,
-            "incident_id": str(incident.id),
-            "arrival_timestamp": ping.timestamp.isoformat(),
-            "location": location.model_dump(),
-            "distance_m": detection.distance_m,
-            "accuracy_m": ping.accuracy_m,
-            "detection_method": detection.detection_method,
-        },
-        "sequence_id": state.events.next_sequence_id(),
-    })
-
-    return {
-        "responder_id": str(responder_id),
-        "arrival_detected": True,
-        "incident_id": str(incident.id),
-        "distance_m": detection.distance_m,
-        "detection_method": detection.detection_method,
-    }
 
 
 @router.post("/{responder_id}/assignment/complete")
@@ -196,6 +96,9 @@ async def complete_responder_assignment(
     completed_dispatch = await state.active_dispatches.complete_for_responder(responder_id)
     if completed_dispatch is None:
         raise HTTPException(status_code=404, detail="active assignment not found")
+    movement = getattr(state, "dispatch_movement", None)
+    if movement is not None:
+        await movement.cancel(responder_id)
 
     released_responder = await state.responders.set_status(
         responder_id,

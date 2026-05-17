@@ -8,11 +8,12 @@ import pytest
 from disaster.snowflake.connection import (
     _SCHEMAS,
     _connect_params,
+    _insert_sql,
     _insert_placeholders,
     _row_to_columns,
     env_configured,
 )
-from disaster.snowflake.tables import SCHEMA_SERVING, TABLE_COLUMNS
+from disaster.snowflake.tables import SCHEMA_AGENT, SCHEMA_SERVING, TABLE_COLUMNS, WRITABLE_TABLES
 
 # Required base
 _BASE = {"SNOWFLAKE_ACCOUNT": "xy12345", "SNOWFLAKE_USER": "demo"}
@@ -154,6 +155,16 @@ def test_insert_placeholders_parse_json_for_variant_columns():
     assert route_ph.count("PARSE_JSON(%s)") == 7
 
 
+def test_insert_sql_uses_select_for_variant_expressions():
+    columns = TABLE_COLUMNS[f"{SCHEMA_SERVING}.ROUTING_INPUTS"]
+    sql = _insert_sql("SERVING.ROUTING_INPUTS", columns)
+
+    assert " VALUES " not in sql
+    assert sql.startswith("INSERT INTO SERVING.ROUTING_INPUTS")
+    assert " SELECT " in sql
+    assert "PARSE_JSON(%s)" in sql
+
+
 def test_serving_responder_arrivals_schema_is_flushable():
     row = {
         "ASSIGNMENT_ID": "assignment-1",
@@ -173,3 +184,12 @@ def test_serving_responder_arrivals_schema_is_flushable():
     table_key = "SERVING.RESPONDER_ARRIVALS"
     assert table_key in _SCHEMAS
     assert _row_to_columns(table_key, row) == [row[column] for column in _SCHEMAS[table_key]]
+
+
+def test_agent_runs_schema_is_writable_and_variant_backed():
+    table_key = f"{SCHEMA_AGENT}.AGENT_RUNS"
+    columns = TABLE_COLUMNS[table_key]
+    placeholders = _insert_placeholders(columns)
+
+    assert table_key in WRITABLE_TABLES
+    assert placeholders.count("PARSE_JSON(%s)") == 4
