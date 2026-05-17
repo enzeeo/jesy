@@ -121,9 +121,9 @@ def test_greedy_eta_proportional_to_distance():
 
 def test_weighted_flow_can_visit_closer_lower_priority_first():
     """Weighted flow-time may beat strict priority when total waiting cost drops."""
-    responder = _responder("ALS-1", 19.700, -155.000)
-    far_high = _incident(19.900, -155.000, priority=0.90)
-    near_low = _incident(19.701, -155.000, priority=0.80)
+    responder = _responder("ALS-1", 35.595, -82.551)
+    far_high = _incident(35.695, -82.551, priority=0.90)
+    near_low = _incident(35.596, -82.551, priority=0.80)
 
     assignment = optimize_weighted_flow(
         [DispatchTarget.from_incident(far_high), DispatchTarget.from_incident(near_low)],
@@ -249,8 +249,8 @@ def test_weighted_flow_live_provider_only_runs_for_final_legs(monkeypatch):
 
 
 def test_mapbox_provider_parses_geojson_geometry(monkeypatch):
-    from_location = Location(lat=29.3013, lng=-94.7977, description="station")
-    to_location = Location(lat=29.3115, lng=-94.7893, description="caller")
+    from_location = Location(lat=35.5951, lng=-82.5515, description="station")
+    to_location = Location(lat=35.6043, lng=-82.5902, description="caller")
 
     class FakeResponse:
         def raise_for_status(self):
@@ -264,9 +264,9 @@ def test_mapbox_provider_parses_geojson_geometry(monkeypatch):
                     "geometry": {
                         "type": "LineString",
                         "coordinates": [
-                            [-94.7977, 29.3013],
-                            [-94.7930, 29.3062],
-                            [-94.7893, 29.3115],
+                            [-82.5515, 35.5951],
+                            [-82.5685, 35.5994],
+                            [-82.5902, 35.6043],
                         ],
                     },
                 }],
@@ -300,8 +300,8 @@ def test_mapbox_provider_parses_geojson_geometry(monkeypatch):
 
 
 def test_mapbox_failure_falls_back_to_stub_with_warning(monkeypatch):
-    from_location = Location(lat=29.3013, lng=-94.7977, description="station")
-    to_location = Location(lat=29.3115, lng=-94.7893, description="caller")
+    from_location = Location(lat=35.5951, lng=-82.5515, description="station")
+    to_location = Location(lat=35.6043, lng=-82.5902, description="caller")
 
     monkeypatch.setenv("MAPBOX_ACCESS_TOKEN", "mapbox-token")
     monkeypatch.setattr("disaster.routing.weighted._estimate_route_with_mapbox", lambda *_args: None)
@@ -396,8 +396,9 @@ async def test_optimize_endpoint_publishes_route_recomputed():
             body = r.json()
             assert body["solver"] in {"greedy", "vrp", "weighted_flow"}
             assert len(body["routes"]) == 1
-            assert body["road_access"]["feature_count"] == 2
-            assert body["road_access"]["hard_avoid_count"] == 2
+            assert body["road_access"]["feature_count"] == 4
+            assert body["road_access"]["hard_avoid_count"] == 4
+            assert body["road_access"]["source"] == "helene_curated_asheville"
             assert body["road_access"]["feature_collection"]["type"] == "FeatureCollection"
 
         first_event = await asyncio.wait_for(consumer, timeout=1.0)
@@ -406,7 +407,7 @@ async def test_optimize_endpoint_publishes_route_recomputed():
         event_types = {first_event["type"], second_event["type"]}
         assert event_types == {"route_recomputed", "road_access_updated"}
         road_event = first_event if first_event["type"] == "road_access_updated" else second_event
-        assert road_event["data"]["hard_avoid_count"] == 2
+        assert road_event["data"]["hard_avoid_count"] == 4
     finally:
         await state.snowflake.stop(0.5)
 
@@ -427,8 +428,9 @@ async def test_road_access_endpoint_returns_demo_blocked_roads():
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["feature_count"] == 2
-    assert payload["hard_avoid_count"] == 2
+    assert payload["feature_count"] == 4
+    assert payload["hard_avoid_count"] == 4
+    assert payload["source"] == "helene_curated_asheville"
     assert payload["feature_collection"]["type"] == "FeatureCollection"
 
 
@@ -449,11 +451,56 @@ async def test_blocked_roads_endpoint_returns_demo_stub_labels_and_geojson():
     assert response.status_code == 200
     payload = response.json()
     labels = {road["label"] for road in payload["blocked_roads"]}
-    assert labels == {"Harbor flood closure", "Seawall washout"}
-    assert payload["blocked_count"] == 2
-    assert payload["hard_avoid_count"] == 2
+    assert labels == {
+        "River Arts District flood zone",
+        "Biltmore Village Swannanoa flood zone",
+        "Hominy Creek flood zone",
+        "I-40 east washout corridor",
+    }
+    assert payload["blocked_count"] == 4
+    assert payload["hard_avoid_count"] == 4
     assert payload["feature_collection"]["type"] == "FeatureCollection"
-    assert len(payload["feature_collection"]["features"]) == 2
+    assert payload["feature_collection"]["metadata"]["source"] == "helene_curated_asheville"
+    assert len(payload["feature_collection"]["features"]) == 4
+
+
+async def test_optimize_endpoint_writes_road_access_snapshot_to_snowflake():
+    from httpx import ASGITransport, AsyncClient
+
+    from disaster.app.deps import AppState
+    from disaster.app.main import create_app
+    from disaster.snowflake import SnowflakeWriter
+
+    collected: dict[str, list[dict]] = {}
+
+    async def collect(table, rows):
+        collected.setdefault(table, []).extend(rows)
+
+    state = AppState()
+    writer = SnowflakeWriter(collect, flush_interval_s=0.01, batch_size=1)
+    app = create_app(snowflake_writer=writer, state=state)
+    await writer.start()
+    try:
+        await state.responders.upsert(_responder("ALS-1", 35.595, -82.551))
+        await state.incidents.insert(_incident(35.600, -82.540, priority=0.8))
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/routing/optimize")
+
+        assert response.status_code == 200
+        body = response.json()
+        await writer.stop(0.5)
+
+        snapshots = collected.get("CLEAN.ROAD_ACCESS_SNAPSHOTS", [])
+        features = collected.get("CLEAN.ROAD_ACCESS_FEATURES", [])
+        recommendations = collected.get("SERVING.ROUTE_RECOMMENDATIONS", [])
+        assert len(snapshots) == 1
+        assert len(features) == body["road_access"]["feature_count"]
+        assert snapshots[0]["ROAD_ACCESS_ID"] == body["road_access"]["road_access_id"]
+        assert recommendations[0]["ROAD_ACCESS_ID"] == body["road_access"]["road_access_id"]
+    finally:
+        await writer.stop(0.5)
 
 
 async def test_demo_reset_and_seed_publish_road_access_updated():
@@ -484,7 +531,7 @@ async def test_demo_reset_and_seed_publish_road_access_updated():
             seed_road_event = (
                 first_seed_event if first_seed_event["type"] == "road_access_updated" else second_seed_event
             )
-            assert seed_road_event["data"]["hard_avoid_count"] == 2
+            assert seed_road_event["data"]["hard_avoid_count"] == 4
 
             first_reset_task = asyncio.create_task(agen.__anext__())
             await asyncio.sleep(0.01)
@@ -497,7 +544,7 @@ async def test_demo_reset_and_seed_publish_road_access_updated():
             reset_road_event = (
                 first_reset_event if first_reset_event["type"] == "road_access_updated" else second_reset_event
             )
-            assert reset_road_event["data"]["hard_avoid_count"] == 2
+            assert reset_road_event["data"]["hard_avoid_count"] == 4
     finally:
         await agen.aclose()
 
@@ -858,11 +905,11 @@ async def test_optimize_endpoint_accepts_stub_body_with_cluster_and_road_access(
             "geometry": {
                 "type": "Polygon",
                 "coordinates": [[
-                    [-155.002, 19.699],
-                    [-154.998, 19.699],
-                    [-154.998, 19.702],
-                    [-155.002, 19.702],
-                    [-155.002, 19.699],
+                    [-82.554, 35.592],
+                    [-82.548, 35.592],
+                    [-82.548, 35.598],
+                    [-82.554, 35.598],
+                    [-82.554, 35.592],
                 ]],
             },
         }],
@@ -870,8 +917,8 @@ async def test_optimize_endpoint_accepts_stub_body_with_cluster_and_road_access(
     body = {
         "responders": [responder.model_dump(mode="json")],
         "clusters": [{
-            "id": "cluster-hilo-1",
-            "location": {"lat": 19.701, "lng": -155.000, "description": "cluster centroid"},
+            "id": "cluster-asheville-1",
+            "location": {"lat": 35.604, "lng": -82.590, "description": "cluster centroid"},
             "priority_score": 0.85,
             "demand_count": 3,
             "member_incident_ids": ["caller-a", "caller-b"],
@@ -891,6 +938,6 @@ async def test_optimize_endpoint_accepts_stub_body_with_cluster_and_road_access(
     assert payload["solver"] == "weighted_flow"
     assert payload["road_access"]["feature_count"] == 1
     route = payload["routes"][str(responder.id)]
-    assert route[0]["target_id"] == "cluster-hilo-1"
+    assert route[0]["target_id"] == "cluster-asheville-1"
     assert route[0]["target_type"] == "cluster"
     assert route[0]["route_geometry"]["type"] == "LineString"

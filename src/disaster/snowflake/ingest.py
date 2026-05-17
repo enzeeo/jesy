@@ -39,9 +39,9 @@ def _age_band(age: int | None) -> str | None:
 
 
 def _sector_id(lat: float) -> str:
-    if lat > 29.31:
+    if lat > 35.61:
         return "NORTH"
-    if lat < 29.29:
+    if lat < 35.57:
         return "SOUTH"
     return "CENTRAL"
 
@@ -50,7 +50,7 @@ def emit_incident(
     writer: SnowflakeWriter,
     report: dict[str, Any],
     *,
-    source_system: str = "hilo_dispatch",
+    source_system: str = "asheville_dispatch",
 ) -> None:
     """Persist incident to RAW + CLEAN (+ victim rows)."""
     received = report.get("timestamp") or _now()
@@ -293,6 +293,56 @@ def emit_cortex_alert(writer: SnowflakeWriter, alert: dict[str, Any]) -> None:
         "MESSAGE": alert.get("message", ""),
         "DETECTED_AT": detected_at,
     })
+
+
+def emit_road_access_snapshot(writer: SnowflakeWriter, feature_collection: dict[str, Any]) -> str:
+    """Persist a road-access FeatureCollection to CLEAN snapshot and feature tables."""
+
+    from disaster.road_access import stable_road_access_id
+    from disaster.routing.weighted import summarize_road_access
+
+    metadata = feature_collection.get("metadata") if isinstance(feature_collection.get("metadata"), dict) else {}
+    summary = summarize_road_access(feature_collection)
+    road_access_id = str(metadata.get("road_access_id") or stable_road_access_id(feature_collection))
+    source = str(metadata.get("source") or "unknown")
+    version = str(metadata.get("version") or "unknown")
+    loaded_at = metadata.get("loaded_at") or _now().isoformat()
+    features = feature_collection.get("features") if isinstance(feature_collection.get("features"), list) else []
+
+    writer.write(f"{SCHEMA_CLEAN}.ROAD_ACCESS_SNAPSHOTS", {
+        "ROAD_ACCESS_ID": road_access_id,
+        "SOURCE": source,
+        "VERSION": version,
+        "LOADED_AT": loaded_at,
+        "FEATURE_COLLECTION": json.dumps(feature_collection, sort_keys=True),
+        "FEATURE_COUNT": summary.get("feature_count", 0),
+        "HARD_AVOID_COUNT": summary.get("hard_avoid_count", 0),
+        "SOFT_PENALTY_COUNT": summary.get("soft_penalty_count", 0),
+        "STATUS_COUNTS": json.dumps(summary.get("status_counts") or {}, sort_keys=True),
+        "PROVIDER": summary.get("provider"),
+        "AVOIDANCE_STRATEGY": summary.get("avoidance_strategy"),
+    })
+
+    created_at = _now().isoformat()
+    for index, feature in enumerate(features, start=1):
+        if not isinstance(feature, dict):
+            continue
+        properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+        geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+        feature_id = properties.get("feature_id") or f"{road_access_id}:{index:03d}"
+        writer.write(f"{SCHEMA_CLEAN}.ROAD_ACCESS_FEATURES", {
+            "FEATURE_ID": str(feature_id),
+            "ROAD_ACCESS_ID": road_access_id,
+            "LABEL": properties.get("label"),
+            "ROAD_STATUS": properties.get("road_status") or properties.get("status"),
+            "CONFIDENCE": properties.get("confidence"),
+            "GEOMETRY_TYPE": geometry.get("type"),
+            "GEOMETRY": json.dumps(geometry, sort_keys=True),
+            "PROPERTIES": json.dumps(properties, sort_keys=True),
+            "CREATED_AT": created_at,
+        })
+
+    return road_access_id
 
 
 def emit_route_optimization(
