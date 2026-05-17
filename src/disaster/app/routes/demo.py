@@ -2,7 +2,7 @@
 Demo control endpoints. Used by the dashboard's top-bar buttons to seed state
 and trigger pre-recorded voice calls without going through ElevenLabs.
 
-  POST /demo/seed-responders     stage ALS-1, ALS-2, BLS-1 in Galveston, Texas
+  POST /demo/seed-responders     stage ALS-1, ALS-2, BLS-1 in Asheville, NC
   POST /demo/trigger-call        run a recorded transcript through /intake/voice
   POST /demo/reset               wipe in-memory state
 """
@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/demo", tags=["demo"])
 
-# Galveston Fire Station 1: 823 25th St, Galveston, TX
-_TEXAS_HQ = Location(lat=29.3013, lng=-94.7977, description="Galveston Fire Station 1")
+# Asheville Fire Station 1, downtown Asheville, NC
+_ASHEVILLE_HQ = Location(lat=35.5951, lng=-82.5515, description="Asheville Fire Station 1")
 
 
 def _state(req: Request) -> AppState:
@@ -54,13 +54,13 @@ def _state(req: Request) -> AppState:
 async def seed_responders(request: Request) -> dict[str, Any]:
     state = _state(request)
     units = [
-        ResponderUnit(callsign="ALS-1", type=ResponderType.ALS, location=_TEXAS_HQ),
+        ResponderUnit(callsign="ALS-1", type=ResponderType.ALS, location=_ASHEVILLE_HQ),
         ResponderUnit(callsign="ALS-2", type=ResponderType.ALS,
-                      location=Location(lat=29.2913, lng=-94.8077, description="Station 2, Galveston")),
+                      location=Location(lat=35.5790, lng=-82.5930, description="West Asheville station")),
         ResponderUnit(callsign="BLS-1", type=ResponderType.BLS,
-                      location=Location(lat=29.3107, lng=-94.7752, description="Station 5, Seawall")),
+                      location=Location(lat=35.5484, lng=-82.4810, description="Oteen station")),
         ResponderUnit(callsign="FIRE-1", type=ResponderType.FIRE,
-                      location=Location(lat=29.3013, lng=-94.7977, description="Galveston Fire Station 1")),
+                      location=Location(lat=35.5951, lng=-82.5515, description="Asheville Fire Station 1")),
     ]
     for u in units:
         await state.responders.upsert(u)
@@ -95,9 +95,13 @@ async def reset_state(request: Request) -> dict[str, Any]:
 
 
 async def _publish_road_access_updated(state: AppState) -> None:
+    road_access = await state.road_access.get()
+    if state.snowflake is not None:
+        from disaster.snowflake import ingest
+        ingest.emit_road_access_snapshot(state.snowflake, road_access)
     await state.events.publish({
         "type": "road_access_updated",
-        "data": summarize_road_access(await state.road_access.get()),
+        "data": summarize_road_access(road_access),
         "sequence_id": state.events.next_sequence_id(),
     })
 
@@ -105,55 +109,60 @@ async def _publish_road_access_updated(state: AppState) -> None:
 # Pre-recorded transcripts. In a real demo these come from ElevenLabs voice flow;
 # /demo/trigger-call lets the presenter fire one without the cloud round-trip.
 _TRANSCRIPTS: dict[str, dict[str, Any]] = {
-    "pier21_immediate": {
+    "biltmore_immediate": {
         "transcript": (
-            "There's flooding at the harbor by Pier 21 in Galveston. I see at least one "
-            "person down, they're breathing but very shallow. There's blood on the dock. "
-            "I think a child got pulled in, can someone come quickly?"
+            "I'm calling from Biltmore Village in Asheville. The water came up fast near "
+            "the Swannanoa River and one person is trapped in a storefront. They're "
+            "breathing but very shallow and there's a child with them."
         ),
-        "location_hint": "Pier 21, Galveston, TX",
+        "location_hint": "Biltmore Village, Asheville, NC",
     },
-    "seawall_delayed": {
+    "river_arts_delayed": {
         "transcript": (
-            "I'm at a hotel on Seawall Boulevard in Galveston. There's a guest who fell "
-            "down the stairs, looks like she broke her leg. She's alert, talking to me. "
-            "Her name's Margaret, she's 67 and she takes blood thinners."
+            "I'm near the River Arts District in Asheville. A neighbor was hit by debris "
+            "while clearing mud from the road. It looks like a broken leg. She's alert, "
+            "talking to me, and she takes blood thinners."
         ),
-        "location_hint": "Seawall Boulevard, Galveston, TX",
+        "location_hint": "River Arts District, Asheville, NC",
     },
-    "strand_minor": {
+    "woodfin_minor": {
         "transcript": (
-            "Hi, I'm calling from The Strand in Galveston. A shop worker cut his hand "
-            "moving storm debris. It's bleeding but he's walking around fine. Just "
-            "wanted to get someone to check on him."
+            "Hi, I'm calling from Woodfin north of Asheville. A shop worker cut his "
+            "hand moving storm debris. It's bleeding but he's walking around fine. "
+            "Just wanted to get someone to check on him."
         ),
-        "location_hint": "The Strand, Galveston, TX",
+        "location_hint": "Woodfin, NC",
     },
+}
+
+_SCENARIO_ALIASES = {
+    "west_asheville_minor": "woodfin_minor",
 }
 
 
 @router.post("/trigger-call")
-async def trigger_call(request: Request, scenario: str = "pier4_immediate") -> dict[str, Any]:
+async def trigger_call(request: Request, scenario: str = "biltmore_immediate") -> dict[str, Any]:
     """
     Fire a pre-recorded transcript through the full /intake/voice pipeline.
     Demo control; uses the real LLM extractor if configured, else a deterministic stub.
     """
     state = _state(request)
-    if scenario not in _TRANSCRIPTS:
+    canonical_scenario = _SCENARIO_ALIASES.get(scenario, scenario)
+    if canonical_scenario not in _TRANSCRIPTS:
         raise HTTPException(status_code=404, detail=f"unknown scenario; try {list(_TRANSCRIPTS)}")
 
-    record = _TRANSCRIPTS[scenario]
+    record = _TRANSCRIPTS[canonical_scenario]
     transcript = record["transcript"]
 
     if state.llm_client is None:
         # Stub: skip LLM, build a plausible incident inline so the demo still flows.
-        incident = _stub_extraction(scenario, transcript)
+        incident = _stub_extraction(canonical_scenario, transcript)
     else:
         try:
             incident = await extract_incident(state.llm_client, transcript)
         except (EmptyExtraction, MalformedLLMResponse, UpstreamUnavailable) as e:
             log.warning("trigger-call: extraction failed (%s), falling back to stub", e)
-            incident = _stub_extraction(scenario, transcript)
+            incident = _stub_extraction(canonical_scenario, transcript)
 
     incident = incident.model_copy(update={"source": IncidentSource.VOICE})
 
@@ -174,7 +183,7 @@ async def trigger_call(request: Request, scenario: str = "pier4_immediate") -> d
         "data": persisted.model_dump(mode="json"),
         "sequence_id": state.events.next_sequence_id(),
     })
-    return {"scenario": scenario, "incident_id": str(persisted.id)}
+    return {"scenario": canonical_scenario, "incident_id": str(persisted.id)}
 
 
 @router.get("/scenarios")
@@ -190,20 +199,21 @@ async def list_scenarios() -> dict[str, Any]:
 def _stub_extraction(scenario: str, transcript: str):
     """Deterministic fallback when LLM is not configured."""
     from disaster.models import IncidentReport, Severity
-    if scenario == "pier21_immediate":
+    scenario = _SCENARIO_ALIASES.get(scenario, scenario)
+    if scenario == "biltmore_immediate":
         return IncidentReport(
-            location=Location(lat=29.3115, lng=-94.7893, description="Pier 21, Galveston, TX"),
+            location=Location(lat=35.5745, lng=-82.5290, description="Kenilworth near Biltmore Village, Asheville, NC"),
             victims=[Victim(
                 age_estimate=10, injuries=["respiratory distress", "submersion"],
                 breathing=Breathing.SPONTANEOUS, perfusion=Perfusion.POOR,
                 mobility=Mobility.CANNOT_FOLLOW_COMMANDS, respiratory_rate=34,
                 vulnerabilities=["child"],
             )],
-            severity=Severity.DELAYED, confidence=0.92, call_transcript=transcript,
+            severity=Severity.IMMEDIATE, confidence=0.92, call_transcript=transcript,
         )
-    if scenario == "seawall_delayed":
+    if scenario == "river_arts_delayed":
         return IncidentReport(
-            location=Location(lat=29.2818, lng=-94.7963, description="Seawall Boulevard, Galveston, TX"),
+            location=Location(lat=35.5790, lng=-82.5930, description="West Asheville near River Arts District, Asheville, NC"),
             victims=[Victim(
                 age_estimate=67, injuries=["fractured leg"],
                 breathing=Breathing.SPONTANEOUS, perfusion=Perfusion.NORMAL,
@@ -212,9 +222,9 @@ def _stub_extraction(scenario: str, transcript: str):
             )],
             severity=Severity.DELAYED, confidence=0.95, call_transcript=transcript,
         )
-    # strand_minor
+    # woodfin_minor
     return IncidentReport(
-        location=Location(lat=29.3053, lng=-94.7944, description="The Strand, Galveston, TX"),
+        location=Location(lat=35.6472, lng=-82.5607, description="Woodfin, north Asheville, NC"),
         victims=[Victim(
             age_estimate=52, injuries=["laceration"],
             breathing=Breathing.SPONTANEOUS, perfusion=Perfusion.NORMAL,

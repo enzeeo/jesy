@@ -626,7 +626,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        <aside className="w-[360px] border-l border-border-strong bg-bg-base">
+        <aside className="w-[420px] border-l border-border-strong bg-bg-base">
           <ErrorBoundary label="Incident list">
             <IncidentList
               incidents={incidents}
@@ -638,7 +638,7 @@ export default function Dashboard() {
         </aside>
       </div>
 
-      <div className="h-[180px] border-t border-border-strong bg-bg-base flex">
+      <div className="h-[220px] border-t border-border-strong bg-bg-base flex">
         <div className="w-[280px]">
           <ErrorBoundary label="Infra panel">
             <InfraPanel callsHandled={callsHandled} incidentsCount={incidents.length} />

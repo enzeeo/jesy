@@ -41,7 +41,7 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction, o
     <div className="flex h-14 items-center justify-between border-b border-border-strong bg-bg-panel px-4">
       <div className="flex items-center gap-6">
         <div className="flex items-baseline gap-2">
-          <span className="mono text-base font-bold tracking-wide text-fg-primary">▲ TEXAS DISPATCH</span>
+          <span className="mono text-base font-bold tracking-wide text-fg-primary">▲ ASHEVILLE DISPATCH</span>
         </div>
         <div className="mono flex items-baseline gap-4 text-xs text-fg-secondary">
           <span><span className="text-fg-primary">{respondersCount}</span> units</span>
@@ -55,7 +55,7 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction, o
 
       <div className="flex items-center gap-2">
         <TopBarButton label="Seed Responders" pending={pendingActions.has("seed")} onClick={() => run("seed", api.seedResponders)} />
-        <TopBarButton label="Start Sim" pending={pendingActions.has("sim")} onClick={() => run("sim", () => api.simStart(200, 60))} />
+        <TopBarButton label="Start Sim" pending={pendingActions.has("sim")} onClick={() => run("sim", () => api.simStart(200, 60, "helene_cached"))} />
         <TopBarButton label="Optimize" pending={pendingActions.has("optimize")} onClick={() => run("optimize", onOptimize)} />
         <TopBarButton label="Cortex Scan" pending={pendingActions.has("cortex")} onClick={() => run("cortex", api.cortexScan)} />
         <div className="mx-2 h-6 w-px bg-border-strong" />

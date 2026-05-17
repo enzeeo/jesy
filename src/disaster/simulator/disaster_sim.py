@@ -7,8 +7,8 @@ DisasterSimulator — generates synthetic incidents on a compressed temporal cur
   Replay     : feed them to /incidents at the demo cadence
   Idempotent : same (sim_run_id, external_id) is rejected by IncidentStore
 
-Profile: Texas Gulf Coast flood surge parameters.
-  - Coastal weighting: most incidents near the Galveston waterfront
+Profile: Asheville / Buncombe County Helene inland-flood parameters.
+  - Land-only anchors: incidents are sampled from approved Asheville caller points
   - Severity distribution: 12% Immediate, 35% Delayed, 50% Minor, 3% Deceased
   - Temporal: front-loaded (impact + 2 hours = 70% of incidents)
   - Vulnerabilities: 8% child, 18% elderly, 4% mobility-dep
@@ -37,10 +37,25 @@ from disaster.models import (
 
 log = logging.getLogger(__name__)
 
-# Galveston, Texas center (Gulf Coast flood surge impact zone)
-_TEXAS_CENTER = (29.3013, -94.7977)
-_COASTAL_LAT = 29.3013
-_COASTAL_LNG_RANGE = (-94.830, -94.760)
+# Asheville, North Carolina center (Helene inland-flood impact zone)
+ASHEVILLE_CENTER = (35.5951, -82.5515)
+ASHEVILLE_CALLER_ANCHORS = (
+    (35.5951, -82.5515, "Downtown Asheville"),
+    (35.5762, -82.5493, "Mission Hospital"),
+    (35.6179, -82.5669, "UNC Asheville"),
+    (35.5790, -82.5930, "West Asheville Library"),
+    (35.6118, -82.5442, "Charlotte Street"),
+    (35.5745, -82.5290, "Kenilworth"),
+    (35.6087, -82.5092, "Haw Creek"),
+    (35.5640, -82.6330, "Enka-Candler"),
+    (35.5484, -82.4810, "Oteen"),
+    (35.6472, -82.5607, "Woodfin"),
+    (35.5350, -82.6040, "Skyland"),
+    (35.6043, -82.5902, "Montford"),
+    (35.6049, -82.5299, "Grove Park"),
+    (35.5909, -82.5024, "Beverly Hills"),
+    (35.6357, -82.5826, "Weaverville Road"),
+)
 
 _SEVERITY_DIST = [
     (Severity.IMMEDIATE, 0.12),
@@ -55,15 +70,6 @@ _INJURIES_BY_SEVERITY: dict[Severity, list[str]] = {
     Severity.MINOR: ["abrasion", "contusion", "mild laceration", "shock"],
     Severity.DECEASED: ["multiple trauma"],
 }
-
-_LANDMARKS = [
-    "Pier 21", "Galveston Harbor", "The Strand", "Seawall Boulevard",
-    "Harborside Drive", "25th Street", "Broadway Avenue J",
-    "UTMB Health campus", "East End", "West End",
-    "Moody Gardens", "Stewart Beach", "Galveston Island Historic Pleasure Pier",
-    "Rosenberg Library area", "Texas City Dike",
-]
-
 
 def _sample_severity(rng: random.Random) -> Severity:
     roll = rng.random()
@@ -99,12 +105,10 @@ def _sample_vulnerabilities(rng: random.Random, age: int) -> list[str]:
 
 
 def _sample_location(rng: random.Random) -> Location:
-    """Coastal-weighted spatial distribution."""
-    lat_jitter = rng.gauss(0.0, 0.002)
-    lng = rng.uniform(*_COASTAL_LNG_RANGE)
-    landmark = rng.choice(_LANDMARKS)
+    """Sample only from approved Asheville land anchors."""
+    lat, lng, landmark = rng.choice(ASHEVILLE_CALLER_ANCHORS)
     return Location(
-        lat=_COASTAL_LAT + lat_jitter,
+        lat=lat,
         lng=lng,
         description=f"{landmark} area",
     )
@@ -152,7 +156,7 @@ class SimEvent:
 def generate_texas_flood_profile(
     *,
     count: int = 200,
-    run_id: str = "texas-gulf-flood",
+    run_id: str = "asheville-helene-flood",
     seed: int = 42,
     demo_window_s: float = 60.0,
     impact_time: datetime | None = None,
@@ -190,15 +194,34 @@ def generate_texas_flood_profile(
     return events
 
 
-def generate_hilo_tsunami_profile(
+def generate_asheville_helene_profile(
     *,
     count: int = 200,
-    run_id: str = "texas-gulf-flood",
+    run_id: str = "asheville-helene-flood",
     seed: int = 42,
     demo_window_s: float = 60.0,
     impact_time: datetime | None = None,
 ) -> list[SimEvent]:
-    """Compatibility wrapper for older imports; now returns the Texas profile."""
+    """Named Asheville profile; wrapper preserves the existing generator contract."""
+
+    return generate_texas_flood_profile(
+        count=count,
+        run_id=run_id,
+        seed=seed,
+        demo_window_s=demo_window_s,
+        impact_time=impact_time,
+    )
+
+
+def generate_hilo_tsunami_profile(
+    *,
+    count: int = 200,
+    run_id: str = "asheville-helene-flood",
+    seed: int = 42,
+    demo_window_s: float = 60.0,
+    impact_time: datetime | None = None,
+) -> list[SimEvent]:
+    """Compatibility wrapper for older imports; now returns the Asheville profile."""
     return generate_texas_flood_profile(
         count=count,
         run_id=run_id,
@@ -232,7 +255,7 @@ class DisasterSimulator:
         self,
         *,
         count: int = 200,
-        run_id: str = "texas-gulf-flood",
+        run_id: str = "asheville-helene-flood",
         seed: int = 42,
         demo_window_s: float = 60.0,
     ) -> None:

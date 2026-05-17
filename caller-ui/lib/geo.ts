@@ -54,7 +54,7 @@ export function getCurrentPosition(timeoutMs = 6000): Promise<GeoCoords> {
 }
 
 export function getFallbackLocation(): { lat: number; lng: number } {
-  const lat = Number.parseFloat(process.env.NEXT_PUBLIC_DEFAULT_LOCATION_LAT ?? "29.3013");
-  const lng = Number.parseFloat(process.env.NEXT_PUBLIC_DEFAULT_LOCATION_LNG ?? "-94.7977");
+  const lat = Number.parseFloat(process.env.NEXT_PUBLIC_DEFAULT_LOCATION_LAT ?? "35.5951");
+  const lng = Number.parseFloat(process.env.NEXT_PUBLIC_DEFAULT_LOCATION_LNG ?? "-82.5515");
   return { lat, lng };
 }

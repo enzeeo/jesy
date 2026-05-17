@@ -156,18 +156,24 @@ async def optimize_routes(
 
     route_id = str(uuid4())
     response_payload = _serialize_assignment(assignment, route_id=route_id)
+    road_access_id: str | None = None
     await state.route_recommendations.save(
         _build_recommendation(route_id=route_id, solver=assignment.solver, payload=response_payload)
     )
 
     if state.snowflake is not None:
         from disaster.snowflake import ingest
+        road_access_id = ingest.emit_road_access_snapshot(state.snowflake, road_access)
+        if isinstance(response_payload.get("road_access"), dict):
+            response_payload["road_access"]["road_access_id"] = road_access_id
+        response_payload["road_access_summary"] = response_payload.get("road_access")
         ingest.emit_route_optimization(
             state.snowflake,
             route_id=route_id,
             solver=assignment.solver,
             elapsed_ms=assignment.elapsed_ms,
             payload=response_payload,
+            road_access_id=road_access_id,
         )
 
     await state.events.publish({

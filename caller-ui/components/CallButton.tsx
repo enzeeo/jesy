@@ -18,7 +18,7 @@ interface CallButtonProps {
  *
  * Fallback paths:
  *   - mic denied   → shows error, suggests text form
- *   - geo denied   → uses fallback lat/lng (configured Hilo default)
+ *   - geo denied   → uses fallback lat/lng (configured Asheville default)
  *   - no agent id  → shows config-missing notice
  */
 export function CallButton({ agentId }: CallButtonProps) {

@@ -14,7 +14,10 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from disaster.road_access import demo_road_access_with_simulated_blocks
+from disaster.road_access import (
+    demo_road_access_with_simulated_blocks,
+    load_helene_cached_road_access,
+)
 from disaster.routing.weighted import summarize_road_access
 from disaster.simulator import DisasterSimulator
 from disaster.triage import score
@@ -80,10 +83,11 @@ def _get_or_create_sim(state) -> DisasterSimulator:
 
 class StartPayload(BaseModel):
     count: int = Field(default=200, ge=1, le=2000)
-    run_id: str = Field(default="texas-gulf-flood", min_length=1, max_length=64)
+    run_id: str = Field(default="asheville-helene-flood", min_length=1, max_length=64)
     seed: int = 42
     demo_window_s: float = Field(default=60.0, gt=0.0)
     road_block_updates: int = Field(default=4, ge=0, le=20)
+    road_access_source: str = Field(default="helene_cached", min_length=1, max_length=40)
 
 
 @router.post("/start")
@@ -93,7 +97,7 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
     if sim.running:
         return {"status": "already_running", **sim.snapshot()}
     await _cancel_road_block_updates(state)
-    road_access = await state.road_access.set(demo_road_access_with_simulated_blocks(0))
+    road_access = await state.road_access.set(_initial_road_access(payload.road_access_source))
     await _publish_road_access_updated(state, road_access)
     await sim.start(
         count=payload.count,
@@ -112,6 +116,15 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
         demo_window_s=payload.demo_window_s,
     )
     return {"status": "started", **sim.snapshot()}
+
+
+def _initial_road_access(source: str) -> dict[str, Any]:
+    normalized_source = source.strip().lower()
+    if normalized_source == "helene_api":
+        return load_helene_cached_road_access(refresh=True)
+    if normalized_source == "helene_cached":
+        return load_helene_cached_road_access()
+    return demo_road_access_with_simulated_blocks(0)
 
 
 @router.post("/stop")
@@ -138,6 +151,9 @@ async def sim_status(request: Request) -> dict[str, Any]:
 
 
 async def _publish_road_access_updated(state: AppState, road_access: dict[str, Any]) -> None:
+    if state.snowflake is not None:
+        from disaster.snowflake import ingest
+        ingest.emit_road_access_snapshot(state.snowflake, road_access)
     await state.events.publish({
         "type": "road_access_updated",
         "data": summarize_road_access(road_access),

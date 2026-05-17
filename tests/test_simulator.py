@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 
 from httpx import ASGITransport, AsyncClient
 
 from disaster.app.deps import AppState
 from disaster.app.main import create_app
 from disaster.models import Severity
+from disaster.road_access import demo_road_access
 from disaster.simulator import DisasterSimulator, generate_texas_flood_profile
+from disaster.simulator.disaster_sim import ASHEVILLE_CALLER_ANCHORS
 
 # ── Generator ────────────────────────────────────────────────────────────────
 
@@ -36,11 +39,79 @@ def test_severity_distribution_approximately_matches_profile():
     assert 0.42 <= counts[Severity.MINOR] / 500 <= 0.58
 
 
-def test_coastal_weighting():
-    """All incidents land near the Galveston coastal corridor."""
+def test_asheville_land_anchor_locations():
+    """All incidents stay near known Asheville land anchors without stacking on exact points."""
     events = generate_texas_flood_profile(count=100)
+    unique_points = {
+        (round(e.incident.location.lat, 6), round(e.incident.location.lng, 6))
+        for e in events
+    }
+
+    assert len(unique_points) == len(events)
+
     for e in events:
-        assert 29.27 < e.incident.location.lat < 29.33
+        nearest_anchor_km = min(
+            _haversine_km(
+                (e.incident.location.lat, e.incident.location.lng),
+                (anchor_latitude, anchor_longitude),
+            )
+            for anchor_latitude, anchor_longitude, _description in ASHEVILLE_CALLER_ANCHORS
+        )
+        assert nearest_anchor_km <= 0.75
+        assert 35.53 < e.incident.location.lat < 35.66
+        assert -82.66 < e.incident.location.lng < -82.48
+
+
+def test_asheville_land_anchors_avoid_default_flood_polygons():
+    flood_polygons = [
+        feature["geometry"]["coordinates"][0]
+        for feature in demo_road_access()["features"]
+        if feature["geometry"]["type"] == "Polygon"
+    ]
+
+    for lat, lng, _description in ASHEVILLE_CALLER_ANCHORS:
+        assert not any(_point_in_polygon(lng, lat, polygon) for polygon in flood_polygons)
+
+
+def test_generated_asheville_locations_avoid_default_flood_polygons():
+    flood_polygons = [
+        feature["geometry"]["coordinates"][0]
+        for feature in demo_road_access()["features"]
+        if feature["geometry"]["type"] == "Polygon"
+    ]
+    events = generate_texas_flood_profile(count=200)
+
+    for event in events:
+        lat = event.incident.location.lat
+        lng = event.incident.location.lng
+        assert not any(_point_in_polygon(lng, lat, polygon) for polygon in flood_polygons)
+
+
+def _point_in_polygon(x: float, y: float, polygon: list[list[float]]) -> bool:
+    inside = False
+    j = len(polygon) - 1
+    for i, vertex in enumerate(polygon):
+        xi, yi = vertex
+        xj, yj = polygon[j]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _haversine_km(left: tuple[float, float], right: tuple[float, float]) -> float:
+    left_latitude, left_longitude = left
+    right_latitude, right_longitude = right
+    earth_radius_km = 6371.0
+    latitude_delta = math.radians(right_latitude - left_latitude)
+    longitude_delta = math.radians(right_longitude - left_longitude)
+    a = (
+        math.sin(latitude_delta / 2) ** 2
+        + math.cos(math.radians(left_latitude))
+        * math.cos(math.radians(right_latitude))
+        * math.sin(longitude_delta / 2) ** 2
+    )
+    return earth_radius_km * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def test_external_ids_unique():
@@ -138,9 +209,9 @@ async def test_sim_start_stages_road_block_updates():
                     road_counts.append(event["data"]["hard_avoid_count"])
                 next_event = asyncio.create_task(agen.__anext__())
 
-        assert road_counts == [2, 3, 4]
+        assert road_counts == [4, 5, 6]
         road_access = await state.road_access.get()
-        assert len(road_access["features"]) == 4
+        assert len(road_access["features"]) == 6
     finally:
         sim = getattr(state, "_sim", None)
         if sim is not None:

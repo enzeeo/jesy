@@ -30,8 +30,8 @@ interface AcceptedRouteLine {
   leg: RouteLeg;
 }
 
-// Galveston, Texas demo center
-const TEXAS_DEMO_CENTER = { lng: -94.7977, lat: 29.3013, zoom: 12.7 };
+// Asheville, North Carolina demo center
+const ASHEVILLE_DEMO_CENTER = { lng: -82.5515, lat: 35.5951, zoom: 12.2 };
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 
@@ -62,6 +62,7 @@ function normalizeRoadAccessFeatureCollection(
   featureCollection: RoadAccessFeatureCollection
 ): RoadAccessFeatureCollection {
   return {
+    ...featureCollection,
     type: "FeatureCollection",
     features: featureCollection.features.map((feature) => {
       const properties = feature.properties ?? {};
@@ -133,8 +134,8 @@ export function MapView({
       map = new mapboxgl.Map({
         container: containerRef.current,
         style: "mapbox://styles/mapbox/dark-v11",
-        center: [TEXAS_DEMO_CENTER.lng, TEXAS_DEMO_CENTER.lat],
-        zoom: TEXAS_DEMO_CENTER.zoom,
+        center: [ASHEVILLE_DEMO_CENTER.lng, ASHEVILLE_DEMO_CENTER.lat],
+        zoom: ASHEVILLE_DEMO_CENTER.zoom,
         attributionControl: false,
       });
     } catch (err) {
@@ -364,9 +365,9 @@ export function MapView({
         paint: {
           "circle-color": [
             "match", ["get", "status"],
-            "on_scene", "#22C55E",
+            "on_scene", "#14B8A6",
             "en_route", "#38BDF8",
-            "assigned", "#FACC15",
+            "assigned", "#8B5CF6",
             "out_of_service", "#64748B",
             "#60A5FA",
           ],
