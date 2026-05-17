@@ -25,6 +25,7 @@ SOFT_ROAD_PENALTY_SECONDS = 90.0
 HARD_ROAD_DEGRADED_PENALTY_SECONDS = 300.0
 ORS_DIRECTIONS_URL = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
 ORS_TIMEOUT_SECONDS = 2.5
+LIVE_ROUTING_ENV = "OPENROUTESERVICE_LIVE_ROUTING"
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,7 @@ def optimize_weighted_flow(
             current_arrival_seconds[responder.id],
             road_summary,
             assignment_reason="accepted_leg_frozen",
+            allow_live_provider=True,
         )
         routes[responder.id].append(leg)
         current_locations[responder.id] = target.location
@@ -168,6 +170,7 @@ def optimize_weighted_flow(
                     current_arrival_seconds[responder.id],
                     road_summary,
                     assignment_reason="weighted_flow_min_cost",
+                    allow_live_provider=False,
                 )
                 score = _weighted_flow_score(target, leg, candidates)
                 if best_choice is None or score < best_choice[0]:
@@ -176,7 +179,16 @@ def optimize_weighted_flow(
         if best_choice is None:
             break
 
-        _, responder, target, leg = best_choice
+        _, responder, target, _scored_leg = best_choice
+        leg = _make_leg(
+            responder,
+            target,
+            current_locations[responder.id],
+            current_arrival_seconds[responder.id],
+            road_summary,
+            assignment_reason="weighted_flow_min_cost",
+            allow_live_provider=True,
+        )
         routes[responder.id].append(leg)
         current_locations[responder.id] = target.location
         current_arrival_seconds[responder.id] = leg.arrival_seconds
@@ -213,8 +225,8 @@ def summarize_road_access(road_access: Mapping[str, Any] | None) -> dict[str, An
         "hard_avoid_count": hard_count,
         "soft_penalty_count": soft_count,
         "status_counts": status_counts,
-        "provider": "openrouteservice" if os.environ.get("OPENROUTESERVICE_API_KEY") else "stub_haversine",
-        "avoidance_strategy": "ors_avoid_polygons_when_configured_else_stub_warning",
+        "provider": "openrouteservice" if _live_routing_enabled() else "stub_haversine",
+        "avoidance_strategy": "ors_avoid_polygons_when_enabled_else_stub_warning",
     }
     if road_access and road_access.get("type") == "FeatureCollection":
         summary["feature_collection"] = road_access
@@ -245,8 +257,14 @@ def _make_leg(
     road_summary: Mapping[str, Any],
     *,
     assignment_reason: str,
+    allow_live_provider: bool,
 ) -> WeightedRouteLeg:
-    route_estimate = _estimate_route(from_location, target.location, road_summary)
+    route_estimate = _estimate_route(
+        from_location,
+        target.location,
+        road_summary,
+        allow_live_provider=allow_live_provider,
+    )
 
     return WeightedRouteLeg(
         target_id=target.id,
@@ -315,13 +333,19 @@ def _estimate_route(
     from_location: Location,
     to_location: Location,
     road_summary: Mapping[str, Any],
+    *,
+    allow_live_provider: bool,
 ) -> RouteEstimate:
     api_key = os.environ.get("OPENROUTESERVICE_API_KEY", "")
-    if api_key:
+    if api_key and allow_live_provider and _live_routing_enabled():
         estimate = _estimate_route_with_ors(from_location, to_location, road_summary, api_key)
         if estimate is not None:
             return estimate
     return _estimate_route_with_stub(from_location, to_location, road_summary)
+
+
+def _live_routing_enabled() -> bool:
+    return os.environ.get(LIVE_ROUTING_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _estimate_route_with_stub(

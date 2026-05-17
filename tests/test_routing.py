@@ -18,7 +18,7 @@ from disaster.models import (
     Victim,
 )
 from disaster.routing import greedy_assign, optimize, solve_vrp
-from disaster.routing.weighted import DispatchTarget, optimize_weighted_flow
+from disaster.routing.weighted import DispatchTarget, RouteEstimate, optimize_weighted_flow
 
 
 def _victim() -> Victim:
@@ -172,6 +172,66 @@ def test_weighted_flow_marks_degraded_when_hard_avoid_roads_have_no_live_provide
     assert leg.degraded is True
     assert leg.provider_status == "stub_haversine"
     assert "hard road closures not enforced by stub provider" in leg.warnings
+
+
+def test_weighted_flow_does_not_use_live_provider_when_only_api_key_is_set(monkeypatch):
+    responder = _responder("ALS-1", 19.700, -155.000)
+    incidents = [_incident(19.701 + (0.001 * i), -155.000, priority=0.8) for i in range(4)]
+
+    def fail_live_provider(*_args, **_kwargs):
+        raise AssertionError("live route provider should be opt-in")
+
+    monkeypatch.setenv("OPENROUTESERVICE_API_KEY", "test-key")
+    monkeypatch.delenv("OPENROUTESERVICE_LIVE_ROUTING", raising=False)
+    monkeypatch.setattr("disaster.routing.weighted._estimate_route_with_ors", fail_live_provider)
+
+    assignment = optimize_weighted_flow(
+        [DispatchTarget.from_incident(incident) for incident in incidents],
+        [responder],
+        route_stop_limit=2,
+    )
+
+    assert len(assignment.routes[responder.id]) == 2
+    assert assignment.road_access["provider"] == "stub_haversine"
+
+
+def test_weighted_flow_live_provider_only_runs_for_final_legs(monkeypatch):
+    responders = [
+        _responder("ALS-1", 19.700, -155.000),
+        _responder("ALS-2", 19.705, -155.005),
+    ]
+    incidents = [_incident(19.701 + (0.001 * i), -155.000, priority=0.8) for i in range(6)]
+    call_count = 0
+
+    def fake_live_provider(from_location, to_location, _road_summary, _api_key):
+        nonlocal call_count
+        call_count += 1
+        return RouteEstimate(
+            distance_km=1.0,
+            eta_seconds=60.0,
+            route_geometry={
+                "type": "LineString",
+                "coordinates": [
+                    [from_location.lng, from_location.lat],
+                    [to_location.lng, to_location.lat],
+                ],
+            },
+            provider_status="openrouteservice",
+        )
+
+    monkeypatch.setenv("OPENROUTESERVICE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTESERVICE_LIVE_ROUTING", "true")
+    monkeypatch.setattr("disaster.routing.weighted._estimate_route_with_ors", fake_live_provider)
+
+    assignment = optimize_weighted_flow(
+        [DispatchTarget.from_incident(incident) for incident in incidents],
+        responders,
+        route_stop_limit=2,
+    )
+
+    assigned_leg_count = sum(len(legs) for legs in assignment.routes.values())
+    assert assigned_leg_count == 4
+    assert call_count == assigned_leg_count
 
 
 # ── Top-level optimize() ─────────────────────────────────────────────────────
