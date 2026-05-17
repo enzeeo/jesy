@@ -108,7 +108,7 @@ def main() -> int:
     print("   # SNOWFLAKE_PASSWORD=  ← remove or leave blank (key-pair takes priority)")
     print("   SNOWFLAKE_WAREHOUSE=DISASTER_WH")
     print("   SNOWFLAKE_DATABASE=DISASTER_DB")
-    print("   SNOWFLAKE_SCHEMA=OPERATIONAL")
+    print("   SNOWFLAKE_SCHEMA=CLEAN")
     print()
     print(f"{BOLD}3.{RESET} Verify the connection:")
     print()

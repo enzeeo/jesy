@@ -120,7 +120,7 @@ def test_connect_params_includes_warehouse_db_schema_defaults(clean_env):
     params = _connect_params()
     assert params["warehouse"] == "DISASTER_WH"
     assert params["database"] == "DISASTER_DB"
-    assert params["schema"] == "OPERATIONAL"
+    assert params["schema"] == "CLEAN"
 
 
 def test_connect_params_overrides_warehouse_db_schema(clean_env):
@@ -136,23 +136,22 @@ def test_connect_params_overrides_warehouse_db_schema(clean_env):
     assert params["schema"] == "CUSTOM_SCHEMA"
 
 
-def test_responder_arrivals_schema_is_flushable():
+def test_serving_responder_arrivals_schema_is_flushable():
     row = {
-        "responder_id": "responder-1",
-        "callsign": "ALS-1",
-        "incident_id": "incident-1",
-        "cluster_id": None,
-        "arrival_timestamp": "2026-05-17T12:00:00Z",
-        "ping_lat": 19.701,
-        "ping_lng": -155.0,
-        "accuracy_m": 8,
-        "route_id": "route-1",
-        "assignment_id": "assignment-1",
-        "detection_method": "geofence_two_pings",
-        "distance_m": 12.5,
+        "ASSIGNMENT_ID": "assignment-1",
+        "RESPONDER_ID": "responder-1",
+        "CALLSIGN": "ALS-1",
+        "INCIDENT_ID": "incident-1",
+        "CLUSTER_ID": None,
+        "ARRIVAL_TIMESTAMP": "2026-05-17T12:00:00Z",
+        "PING_LAT": 19.701,
+        "PING_LNG": -155.0,
+        "ACCURACY_M": 8,
+        "ROUTE_ID": "route-1",
+        "DETECTION_METHOD": "geofence_two_pings",
+        "DISTANCE_M": 12.5,
     }
 
-    assert "responder_arrivals" in _SCHEMAS
-    assert _row_to_columns("responder_arrivals", row) == [
-        row[column] for column in _SCHEMAS["responder_arrivals"]
-    ]
+    table_key = "SERVING.RESPONDER_ARRIVALS"
+    assert table_key in _SCHEMAS
+    assert _row_to_columns(table_key, row) == [row[column] for column in _SCHEMAS[table_key]]

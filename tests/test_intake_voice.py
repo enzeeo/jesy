@@ -73,7 +73,8 @@ async def test_voice_intake_extracts_persists_and_broadcasts():
         # Persisted
         assert await state.incidents.count() == 1
         # Snowflake got both rows
-        assert state.snowflake.metrics.enqueued == 2  # incidents + voice_calls
+        # RAW submission + voice, CLEAN incident + victim(s)
+        assert state.snowflake.metrics.enqueued >= 4
     finally:
         await state.snowflake.stop(0.5)
 

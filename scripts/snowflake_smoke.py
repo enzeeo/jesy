@@ -5,15 +5,7 @@ Snowflake smoke test.
   uv run python scripts/snowflake_smoke.py --init     # also run DDL
   uv run python scripts/snowflake_smoke.py --seed     # also insert one synthetic incident
 
-Exits 0 on green, 1 on any failure. Prints a checklist so you see exactly
-what was verified.
-
-Required env vars (same as the app):
-  SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PASSWORD
-Optional (with defaults):
-  SNOWFLAKE_WAREHOUSE=DISASTER_WH
-  SNOWFLAKE_DATABASE=DISASTER_DB
-  SNOWFLAKE_SCHEMA=OPERATIONAL
+Exits 0 on green, 1 on any failure.
 """
 from __future__ import annotations
 
@@ -25,10 +17,22 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-# Allow running from project root or scripts/
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from dotenv import load_dotenv
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(_PROJECT_ROOT / ".env", override=False)
+
 from disaster.snowflake.connection import _connect_params, env_configured
+from disaster.snowflake.tables import (
+    REQUIRED_TABLES_BY_SCHEMA,
+    SCHEMA_RAW,
+    SCHEMA_CLEAN,
+    SCHEMA_SERVING,
+    database_name,
+    qualified_table,
+)
 from disaster.snowflake.tiles import TILE_QUERIES
 
 GREEN = "\033[32m"
@@ -41,10 +45,6 @@ def ok(msg: str) -> None:
     print(f"  {GREEN}✓{RESET} {msg}")
 
 
-def warn(msg: str) -> None:
-    print(f"  {YELLOW}!{RESET} {msg}")
-
-
 def fail(msg: str) -> None:
     print(f"  {RED}✗{RESET} {msg}")
 
@@ -52,7 +52,7 @@ def fail(msg: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Snowflake smoke test")
     parser.add_argument("--init", action="store_true", help="Run scripts/snowflake_init.sql before checks")
-    parser.add_argument("--seed", action="store_true", help="Insert one synthetic incident + one cortex_alert row")
+    parser.add_argument("--seed", action="store_true", help="Insert one synthetic incident + cortex alert")
     args = parser.parse_args()
 
     print("Snowflake smoke test")
@@ -61,7 +61,6 @@ def main() -> int:
     if not env_configured():
         fail("SNOWFLAKE_ACCOUNT + SNOWFLAKE_USER + (PRIVATE_KEY_PATH or PASSWORD) not set")
         print("\nSet them in .env and re-run. See .env.example.")
-        print("For key-pair auth: uv run python scripts/snowflake_keypair_setup.py")
         return 1
     ok("env vars present")
 
@@ -75,7 +74,6 @@ def main() -> int:
         return 1
     ok("snowflake-connector-python importable")
 
-    # Connect
     try:
         conn = snowflake.connector.connect(**_connect_params())
     except Exception as e:  # noqa: BLE001
@@ -83,13 +81,13 @@ def main() -> int:
         return 1
     ok(f"connected to {os.environ['SNOWFLAKE_ACCOUNT']}")
 
-    # Optional: run DDL
+    db = database_name()
+
     if args.init:
         sql_path = Path(__file__).resolve().parent / "snowflake_init.sql"
         sql_text = sql_path.read_text()
         cur = conn.cursor()
         try:
-            # Snowflake connector executes multiple statements via execute_string
             for stmt in (s.strip() for s in sql_text.split(";") if s.strip()):
                 cur.execute(stmt)
             ok("ran snowflake_init.sql")
@@ -99,51 +97,74 @@ def main() -> int:
         finally:
             cur.close()
 
-    # Verify each required table exists
-    required_tables = ["incidents", "voice_calls", "responder_dispatches", "cortex_alerts"]
     cur = conn.cursor()
+    missing_all: list[str] = []
     try:
-        cur.execute("SHOW TABLES")
-        existing = {row[1].lower() for row in cur.fetchall()}
-        missing = [t for t in required_tables if t not in existing]
-        if missing:
-            fail(f"missing tables: {missing}. Run with --init to create them.")
-            return 1
-        ok(f"all 4 tables present: {required_tables}")
+        for schema, tables in REQUIRED_TABLES_BY_SCHEMA.items():
+            cur.execute(f"SHOW TABLES IN SCHEMA {db}.{schema}")
+            existing = {row[1].upper() for row in cur.fetchall()}
+            missing = [t for t in tables if t.upper() not in existing]
+            if missing:
+                missing_all.extend(f"{schema}.{t}" for t in missing)
+            else:
+                ok(f"schema {schema}: {len(tables)} required tables present")
     finally:
         cur.close()
 
-    # Optional: seed one row in each
+    if missing_all:
+        fail(f"missing tables: {missing_all}. Run with --init to create them.")
+        return 1
+
     if args.seed:
         cur = conn.cursor()
         try:
             now = datetime.now(UTC)
             inc_id = str(uuid.uuid4())
+            raw_fqn = qualified_table(f"{SCHEMA_RAW}.RAW_INCIDENT_SUBMISSIONS")
+            payload = json.dumps({
+                "id": inc_id,
+                "timestamp": now.isoformat(),
+                "source": "voice",
+                "status": "new",
+                "severity": "Immediate",
+                "priority_score": 0.95,
+                "confidence": 0.92,
+                "location": {
+                    "lat": 19.7320,
+                    "lng": -155.0918,
+                    "description": "Smoke test, Pier 4",
+                },
+                "victims": [{
+                    "injuries": ["respiratory distress"],
+                    "vulnerabilities": ["child"],
+                    "consciousness": "alert",
+                }],
+            })
             cur.execute(
-                """INSERT INTO incidents
-                (id, timestamp, source, status, lat, lng, location_description,
-                 severity, priority_score, victim_count, vulnerabilities,
-                 confidence, sim_run_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (inc_id, now, "voice", "new", 19.7320, -155.0918, "Smoke test, Pier 4",
-                 "Immediate", 0.95, 1, "child,trapped", 0.92, None),
+                f"""INSERT INTO {raw_fqn}
+                (RAW_ID, SUBMISSION_ID, SOURCE, RECEIVED_AT, PAYLOAD, _SOURCE_SYSTEM)
+                SELECT %s, %s, %s, %s, PARSE_JSON(%s), %s""",
+                (str(uuid.uuid4()), inc_id, "voice", now, payload, "smoke_test"),
             )
-            ok(f"inserted seed incident id={inc_id[:8]}…")
+            ok(f"inserted seed RAW incident submission id={inc_id[:8]}…")
 
+            alerts_fqn = qualified_table(f"{SCHEMA_SERVING}.CORTEX_ALERTS")
+
+            alert_payload = json.dumps({"source": "smoke"})
             cur.execute(
-                """INSERT INTO cortex_alerts
-                (alert_type, severity, message, detected_at)
-                VALUES (%s, %s, %s, %s)""",
-                ("cluster", "warning", "Smoke test cortex alert", now),
+                f"""INSERT INTO {alerts_fqn}
+                (ALERT_ID, ALERT_TYPE, SEVERITY, SECTOR_ID, PAYLOAD, MESSAGE, DETECTED_AT)
+                SELECT %s, %s, %s, %s, PARSE_JSON(%s), %s, %s""",
+                (str(uuid.uuid4()), "cluster", "warning", "CENTRAL",
+                 alert_payload, "Smoke test cortex alert", now),
             )
-            ok("inserted seed cortex_alert")
+            ok("inserted seed CORTEX_ALERTS row")
         except Exception as e:  # noqa: BLE001
             fail(f"seed insert failed: {e}")
             return 1
         finally:
             cur.close()
 
-    # Run each tile query
     print("\nRunning tile queries:")
     failures = 0
     for tile_name, sql in TILE_QUERIES.items():
@@ -153,7 +174,6 @@ def main() -> int:
             rows = cur.fetchall() or []
             ok(f"{tile_name}: {len(rows)} rows")
             if rows:
-                # First row preview (truncated)
                 preview = json.dumps(rows[0], default=str)[:80]
                 print(f"      first row: {preview}")
         except Exception as e:  # noqa: BLE001
@@ -162,7 +182,6 @@ def main() -> int:
         finally:
             cur.close()
 
-    # Run the Cortex SQL cluster query (used by /cortex/scan when configured)
     print("\nRunning Cortex SQL cluster query:")
     try:
         from disaster.snowflake.cortex import CORTEX_CLUSTER_SQL

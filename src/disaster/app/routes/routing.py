@@ -160,6 +160,16 @@ async def optimize_routes(
         _build_recommendation(route_id=route_id, solver=assignment.solver, payload=response_payload)
     )
 
+    if state.snowflake is not None:
+        from disaster.snowflake import ingest
+        ingest.emit_route_optimization(
+            state.snowflake,
+            route_id=route_id,
+            solver=assignment.solver,
+            elapsed_ms=assignment.elapsed_ms,
+            payload=response_payload,
+        )
+
     await state.events.publish({
         "type": "route_recomputed",
         "data": {
@@ -259,14 +269,21 @@ async def start_dispatch(
         )
 
         if state.snowflake is not None:
-            state.snowflake.write("responder_dispatches", {
-                "responder_id": str(responder.id),
-                "incident_id": str(incident.id),
-                "dispatched_at": dispatch.started_at.isoformat(),
-                "distance_km": dispatch.leg.get("distance_km", 0.0),
-                "eta_seconds": dispatch.leg.get("eta_seconds", 0.0),
-                "solver": dispatch.solver,
-            })
+            from disaster.snowflake import ingest
+            ingest.emit_dispatch_start(
+                state.snowflake,
+                dispatch_id=dispatch.dispatch_id,
+                route_id=dispatch.route_id,
+                leg_id=dispatch.leg_id,
+                responder_id=str(responder.id),
+                incident_id=str(incident.id),
+                started_by=payload.started_by,
+                started_at=dispatch.started_at,
+                solver=dispatch.solver,
+                distance_km=dispatch.leg.get("distance_km", 0.0),
+                eta_seconds=dispatch.leg.get("eta_seconds", 0.0),
+                leg=dispatch.leg,
+            )
 
         event_data = _dispatch_response(dispatch, responder, incident)
         await state.events.publish({

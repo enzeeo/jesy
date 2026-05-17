@@ -51,6 +51,26 @@ async def update_responder_location(
     updated_responder = responder.model_copy(update={"location": location})
     await state.responders.upsert(updated_responder)
 
+    active_dispatch = await state.active_dispatches.get_for_responder(responder_id)
+    if state.snowflake is not None:
+        from disaster.snowflake import ingest
+        ingest.emit_location_ping(
+            state.snowflake,
+            responder_id=str(responder_id),
+            lat=ping.lat,
+            lng=ping.lng,
+            accuracy_m=ping.accuracy_m,
+            timestamp=ping.timestamp,
+            assigned_incident_id=str(updated_responder.assigned_incident_id)
+            if updated_responder.assigned_incident_id
+            else None,
+            route_id=active_dispatch.route_id if active_dispatch else None,
+            leg_id=active_dispatch.leg_id if active_dispatch else None,
+            status=updated_responder.status.value,
+            speed_mps=ping.speed_mps,
+            heading=ping.heading,
+        )
+
     await state.events.publish({
         "type": "responder_location_updated",
         "data": {
@@ -124,7 +144,8 @@ async def update_responder_location(
         "distance_m": detection.distance_m,
     }
     if state.snowflake is not None:
-        state.snowflake.write("responder_arrivals", snowflake_row)
+        from disaster.snowflake import ingest
+        ingest.emit_arrival(state.snowflake, snowflake_row)
 
     await state.events.publish({
         "type": "responder_arrived",

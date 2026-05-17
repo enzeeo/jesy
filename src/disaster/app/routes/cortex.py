@@ -60,10 +60,10 @@ async def cortex_scan(request: Request) -> dict[str, Any]:
             "sequence_id": state.events.next_sequence_id(),
         })
         if state.snowflake is not None:
-            state.snowflake.write("cortex_alerts", {
-                "alert_type": alert["type"],
+            from disaster.snowflake import ingest
+            ingest.emit_cortex_alert(state.snowflake, {
+                **alert,
                 "severity": "warning",
-                "message": alert["message"],
                 "detected_at": datetime.now(UTC),
             })
         last = now

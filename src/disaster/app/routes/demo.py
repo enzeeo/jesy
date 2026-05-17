@@ -64,6 +64,9 @@ async def seed_responders(request: Request) -> dict[str, Any]:
     ]
     for u in units:
         await state.responders.upsert(u)
+        if state.snowflake is not None:
+            from disaster.snowflake import ingest
+            ingest.emit_responder(state.snowflake, u.model_dump(mode="json"))
     await state.events.publish({
         "type": "responders_seeded",
         "data": {"count": len(units)},
@@ -168,7 +171,8 @@ async def trigger_call(request: Request, scenario: str = "pier4_immediate") -> d
 
     persisted = await state.incidents.insert(scored, external_id=str(scored.id))
     if state.snowflake is not None:
-        state.snowflake.write("incidents", persisted.model_dump(mode="json"))
+        from disaster.snowflake import ingest
+        ingest.emit_incident(state.snowflake, persisted.model_dump(mode="json"))
     await state.events.publish({
         "type": "incident_created",
         "data": persisted.model_dump(mode="json"),
