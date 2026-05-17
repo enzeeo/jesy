@@ -20,10 +20,10 @@ from disaster.models import (
 from disaster.snowflake.cortex import detect_clusters, detect_clusters_snowflake
 
 
-def _incident(injuries: list[str], lat: float = 29.32) -> IncidentReport:
+def _incident(injuries: list[str], lat: float = 35.62) -> IncidentReport:
     return IncidentReport(
         timestamp=datetime.now(UTC),
-        location=Location(lat=lat, lng=-94.79, description="x"),
+        location=Location(lat=lat, lng=-82.5515, description="x"),
         victims=[Victim(injuries=injuries, mobility=Mobility.WALKING,
                         breathing=Breathing.SPONTANEOUS, perfusion=Perfusion.NORMAL)],
         severity=Severity.DELAYED,
@@ -71,7 +71,7 @@ async def test_snowflake_path_runs_query_and_shapes_alerts():
     assert alerts[0]["count"] == 4
     assert "clustering" in alerts[0]["message"]
     # Verify the SQL string is what we expect to ship
-    assert "GROUP BY injury_bucket, sector" in captured_sql[0]
+    assert "GROUP BY INJURY_BUCKET, SECTOR" in captured_sql[0]
 
 
 async def test_snowflake_path_handles_lowercase_column_names():

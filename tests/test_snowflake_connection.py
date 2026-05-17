@@ -5,7 +5,14 @@ import os
 
 import pytest
 
-from disaster.snowflake.connection import _SCHEMAS, _connect_params, _row_to_columns, env_configured
+from disaster.snowflake.connection import (
+    _SCHEMAS,
+    _connect_params,
+    _insert_placeholders,
+    _row_to_columns,
+    env_configured,
+)
+from disaster.snowflake.tables import SCHEMA_SERVING, TABLE_COLUMNS
 
 # Required base
 _BASE = {"SNOWFLAKE_ACCOUNT": "xy12345", "SNOWFLAKE_USER": "demo"}
@@ -134,6 +141,17 @@ def test_connect_params_overrides_warehouse_db_schema(clean_env):
     assert params["warehouse"] == "CUSTOM_WH"
     assert params["database"] == "CUSTOM_DB"
     assert params["schema"] == "CUSTOM_SCHEMA"
+
+
+def test_insert_placeholders_parse_json_for_variant_columns():
+    routing_cols = TABLE_COLUMNS[f"{SCHEMA_SERVING}.ROUTING_INPUTS"]
+    placeholders = _insert_placeholders(routing_cols)
+    assert placeholders.count("PARSE_JSON(%s)") == 5
+    assert placeholders.count("%s") == len(routing_cols)
+
+    route_cols = TABLE_COLUMNS[f"{SCHEMA_SERVING}.ROUTE_RECOMMENDATIONS"]
+    route_ph = _insert_placeholders(route_cols)
+    assert route_ph.count("PARSE_JSON(%s)") == 7
 
 
 def test_serving_responder_arrivals_schema_is_flushable():

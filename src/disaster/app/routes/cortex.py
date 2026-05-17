@@ -1,8 +1,8 @@
-"""POST /cortex/scan — run pattern detection, emit cortex_alert SSE on hits.
+"""Cortex endpoints: cluster scan and per-incident reassessment.
 
-Tries the real Snowflake SQL cluster query first (when a query runner is
-configured). On any failure (Snowflake down, query error), falls back to the
-in-memory pattern matcher so the demo never breaks.
+POST /cortex/scan — pattern detection, emit cortex_alert SSE on hits.
+POST /cortex/reassess/{incident_id} — read narrative via Snowflake Cortex AI,
+  update severity + priority_score, broadcast severity_upgraded SSE.
 """
 from __future__ import annotations
 
@@ -10,10 +10,12 @@ import logging
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from disaster.snowflake.cortex import detect_clusters, detect_clusters_snowflake
+from disaster.snowflake.cortex_reassess import reassess_heuristic, reassess_via_snowflake
 
 if TYPE_CHECKING:
     from disaster.app.deps import AppState
@@ -70,3 +72,67 @@ async def cortex_scan(request: Request) -> dict[str, Any]:
         state._cortex_last_emit = now
         emitted.append(alert)
     return {"alerts": alerts, "emitted_count": len(emitted), "source": source}
+
+
+@router.post("/reassess/{incident_id}")
+async def cortex_reassess(incident_id: UUID, request: Request) -> dict[str, Any]:
+    """
+    Use Snowflake Cortex to re-read the incident description and assign severity
+    and priority_score. Updates the in-memory store and emits severity_upgraded
+    when values change. Falls back to keyword heuristics if Cortex is unavailable.
+    """
+    state = _state(request)
+    inc = await state.incidents.get(incident_id)
+    if inc is None:
+        raise HTTPException(status_code=404, detail="incident not found")
+
+    runner = getattr(state, "_sf_query_runner", None)
+    source = "heuristic"
+    try:
+        if runner is not None:
+            result = await reassess_via_snowflake(runner, inc)
+            source = "snowflake"
+        else:
+            result = reassess_heuristic(inc)
+    except Exception as e:  # noqa: BLE001
+        log.warning("cortex reassess: snowflake path failed (%s), using heuristic", e)
+        result = reassess_heuristic(inc)
+        source = "heuristic"
+
+    old_sev = inc.severity
+    old_pri = inc.priority_score
+    updated = inc.model_copy(update={
+        "severity": result.severity,
+        "priority_score": result.priority_score,
+    })
+    await state.incidents.update(updated)
+
+    if state.snowflake is not None:
+        from disaster.snowflake import ingest
+        ingest.emit_incident(state.snowflake, updated.model_dump(mode="json"))
+
+    changed = old_sev != result.severity or old_pri != result.priority_score
+    if changed:
+        await state.events.publish({
+            "type": "severity_upgraded",
+            "data": {
+                "incident_id": str(incident_id),
+                "from": old_sev.value,
+                "to": result.severity.value,
+                "from_priority": old_pri,
+                "to_priority": result.priority_score,
+                "reason": f"cortex ({source}): {result.reason}",
+            },
+            "sequence_id": state.events.next_sequence_id(),
+        })
+
+    return {
+        "incident": updated.model_dump(mode="json"),
+        "source": source,
+        "reason": result.reason,
+        "changed": changed,
+        "previous": {
+            "severity": old_sev.value,
+            "priority_score": old_pri,
+        },
+    }

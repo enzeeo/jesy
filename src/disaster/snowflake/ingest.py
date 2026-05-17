@@ -83,10 +83,7 @@ def emit_incident(
         "STATUS": report.get("status", "new"),
         "USER_ID": user_id,
         "SEVERITY": report.get("severity"),
-        "SOURCE": report.get("source"),
-        "LOCATION_DESCRIPTION": loc.get("description"),
-        "VICTIM_COUNT": len(victims),
-        "CONFIDENCE": report.get("confidence", 1.0),
+        "INCIDENT_DESCRIPTION": loc.get("description"),
         "SIM_RUN_ID": report.get("sim_run_id"),
         "FIRST_REPORTED_AT": received_at,
         "LAST_UPDATED_AT": received_at,
@@ -279,6 +276,16 @@ def emit_arrival(writer: SnowflakeWriter, row: dict[str, Any]) -> None:
     })
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 def emit_cortex_alert(writer: SnowflakeWriter, alert: dict[str, Any]) -> None:
     detected = alert.get("detected_at") or _now()
     detected_at = detected.isoformat() if isinstance(detected, datetime) else str(detected)
@@ -289,7 +296,7 @@ def emit_cortex_alert(writer: SnowflakeWriter, alert: dict[str, Any]) -> None:
         "ALERT_TYPE": alert.get("type", alert.get("alert_type", "cluster")),
         "SEVERITY": alert.get("severity", "warning"),
         "SECTOR_ID": sector,
-        "PAYLOAD": json.dumps(alert),
+        "PAYLOAD": json.dumps(_json_safe(alert)),
         "MESSAGE": alert.get("message", ""),
         "DETECTED_AT": detected_at,
     })
@@ -368,11 +375,11 @@ def emit_route_optimization(
     writer.write(f"{SCHEMA_SERVING}.ROUTING_INPUTS", {
         "ROUTING_INPUT_ID": routing_input_id or _uid(),
         "CREATED_AT": created_at,
-        "RESPONDERS": json.dumps(payload.get("responders")),
-        "INCIDENTS": json.dumps(payload.get("incidents")),
-        "CLUSTERS": json.dumps(payload.get("clusters")),
-        "ROAD_ACCESS": json.dumps(payload.get("road_access")),
-        "ACCEPTED_ASSIGNMENTS": json.dumps(payload.get("accepted_assignments")),
+        "RESPONDERS": payload.get("responders"),
+        "INCIDENTS": payload.get("incidents"),
+        "CLUSTERS": payload.get("clusters"),
+        "ROAD_ACCESS": payload.get("road_access"),
+        "ACCEPTED_ASSIGNMENTS": payload.get("accepted_assignments"),
         "ROUTE_STOP_LIMIT": payload.get("route_stop_limit"),
         "MAX_CANDIDATES": payload.get("max_candidates"),
     })
@@ -382,16 +389,16 @@ def emit_route_optimization(
         "SOLVER": solver,
         "CREATED_AT": created_at,
         "ELAPSED_MS": elapsed_ms,
-        "INPUT_INCIDENT_IDS": json.dumps(sorted(set(input_incident_ids))),
-        "INPUT_CLUSTER_IDS": json.dumps(payload.get("input_cluster_ids") or []),
-        "INPUT_RESPONDER_IDS": json.dumps(input_responder_ids),
-        "ACCEPTED_ASSIGNMENTS": json.dumps(payload.get("accepted_assignments")),
+        "INPUT_INCIDENT_IDS": sorted(set(input_incident_ids)),
+        "INPUT_CLUSTER_IDS": payload.get("input_cluster_ids") or [],
+        "INPUT_RESPONDER_IDS": input_responder_ids,
+        "ACCEPTED_ASSIGNMENTS": payload.get("accepted_assignments"),
         "ROUTE_STOP_LIMIT": payload.get("route_stop_limit"),
         "MAX_CANDIDATES": payload.get("max_candidates"),
         "ROAD_ACCESS_ID": road_access_id,
-        "ROAD_ACCESS_SUMMARY": json.dumps(payload.get("road_access_summary")),
-        "UNASSIGNED": json.dumps(payload.get("unassigned") or []),
-        "PAYLOAD": json.dumps(payload),
+        "ROAD_ACCESS_SUMMARY": payload.get("road_access_summary"),
+        "UNASSIGNED": payload.get("unassigned") or [],
+        "PAYLOAD": payload,
     })
 
     seq = 0
@@ -416,11 +423,11 @@ def emit_route_optimization(
                 "DISTANCE_KM": leg.get("distance_km"),
                 "ETA_SECONDS": leg.get("eta_seconds"),
                 "ARRIVAL_SECONDS": leg.get("arrival_seconds"),
-                "MEMBER_INCIDENT_IDS": json.dumps(leg.get("member_incident_ids") or []),
-                "ROUTE_GEOMETRY": json.dumps(leg.get("route_geometry")),
+                "MEMBER_INCIDENT_IDS": leg.get("member_incident_ids") or [],
+                "ROUTE_GEOMETRY": leg.get("route_geometry"),
                 "DEGRADED": leg.get("degraded", False),
                 "PROVIDER_STATUS": leg.get("provider_status"),
-                "WARNINGS": json.dumps(leg.get("warnings") or []),
+                "WARNINGS": leg.get("warnings") or [],
                 "ASSIGNMENT_REASON": leg.get("assignment_reason"),
                 "CREATED_AT": created_at,
             })

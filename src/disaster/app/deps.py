@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from disaster.app.chat_store import ChatStore
 from disaster.events import EventBroker
 from disaster.snowflake import SnowflakeWriter
 from disaster.store import (
@@ -33,6 +34,7 @@ class AppState:
     road_access: RoadAccessStore = field(default_factory=RoadAccessStore)
     responder_tracking: ResponderTrackingStore = field(default_factory=ResponderTrackingStore)
     events: EventBroker = field(default_factory=EventBroker)
+    chat_store: ChatStore = field(default_factory=ChatStore)
     snowflake: SnowflakeWriter | None = None        # injected at startup
     llm_client: LLMClient | None = None             # injected at startup
     elevenlabs_secret: bytes | None = None          # for HMAC verification

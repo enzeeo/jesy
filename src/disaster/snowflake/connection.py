@@ -53,6 +53,7 @@ _VARIANT_JSON_COLUMNS = frozenset({
     "PROPERTIES", "POLYGON", "ROUTE_GEOM", "H3_CELLS_RES8",
     "RESPONDERS", "INCIDENTS", "CLUSTERS", "ROAD_ACCESS", "ACCEPTED_ASSIGNMENTS",
     "INPUT_INCIDENT_IDS", "INPUT_CLUSTER_IDS", "INPUT_RESPONDER_IDS",
+    "MEMBER_INCIDENT_IDS",
     "ROAD_ACCESS_SUMMARY", "UNASSIGNED", "ALTERNATIVES", "LEG", "ROUTE_GEOMETRY",
     "WARNINGS", "TOOL_CALLS", "CITATIONS", "INPUT_PAYLOAD", "OUTPUT_PAYLOAD",
     "CORTEX_SEARCH_HITS",
@@ -60,7 +61,7 @@ _VARIANT_JSON_COLUMNS = frozenset({
 
 # Snowflake ARRAY columns — bind Python list, not comma-separated VARCHAR.
 _ARRAY_COLUMNS = frozenset({
-    "VULNERABILITIES", "INJURIES", "MEMBER_INCIDENT_IDS",
+    "VULNERABILITIES", "INJURIES",
 })
 
 
@@ -81,6 +82,14 @@ def _coerce_value(col: str, value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return json.dumps(value)
     return value
+
+
+def _insert_placeholders(cols: list[str]) -> str:
+    """Snowflake executemany cannot bind dict/list into VARIANT — use PARSE_JSON on JSON text."""
+    return ", ".join(
+        "PARSE_JSON(%s)" if col in _VARIANT_JSON_COLUMNS else "%s"
+        for col in cols
+    )
 
 
 def _row_to_columns(table_key: str, row: dict[str, Any]) -> list[Any]:
@@ -231,8 +240,10 @@ def build_snowflake_flush() -> Callable[[str, list[dict[str, Any]]], Awaitable[N
                 _flush_victims(cur, fqn, rows)
             else:
                 cols = TABLE_COLUMNS[table_key]
-                placeholders = ", ".join(["%s"] * len(cols))
-                sql = f'INSERT INTO {fqn} ({", ".join(cols)}) VALUES ({placeholders})'
+                sql = (
+                    f'INSERT INTO {fqn} ({", ".join(cols)}) '
+                    f"VALUES ({_insert_placeholders(cols)})"
+                )
                 params_list = [_row_to_columns(table_key, r) for r in rows]
                 cur.executemany(sql, params_list)
         finally:
