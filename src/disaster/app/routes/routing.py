@@ -102,9 +102,10 @@ async def optimize_routes(
     state = _state(request)
     road_access = await state.road_access.get()
     active_dispatches = await state.active_dispatches.list()
-    active_assignments = _accepted_assignments_from_active_dispatches(active_dispatches)
+    routable_active_dispatches = await _active_dispatches_for_routing(state, active_dispatches)
+    active_assignments = _accepted_assignments_from_active_dispatches(routable_active_dispatches)
     if payload is None:
-        active_incident_ids = {dispatch.incident_id for dispatch in active_dispatches}
+        active_incident_ids = {dispatch.incident_id for dispatch in routable_active_dispatches}
         incidents = [
             incident for incident in await state.incidents.list()
             if incident.status in {IncidentStatus.NEW, IncidentStatus.DISPATCHED}
@@ -136,7 +137,7 @@ async def optimize_routes(
             incidents = [
                 incident for incident in await state.incidents.list()
                 if incident.status in {IncidentStatus.NEW, IncidentStatus.DISPATCHED}
-                or incident.id in {dispatch.incident_id for dispatch in active_dispatches}
+                or incident.id in {dispatch.incident_id for dispatch in routable_active_dispatches}
             ]
             targets.extend(DispatchTarget.from_incident(incident) for incident in incidents)
         accepted_assignments = {
@@ -178,6 +179,19 @@ async def optimize_routes(
     })
     await _publish_road_access_updated(state, road_access)
     return response_payload
+
+
+async def _active_dispatches_for_routing(
+    state: AppState,
+    active_dispatches: list[ActiveDispatch],
+) -> list[ActiveDispatch]:
+    routable_dispatches: list[ActiveDispatch] = []
+    for dispatch in active_dispatches:
+        responder = await state.responders.get(dispatch.responder_id)
+        if responder is not None and responder.status == ResponderStatus.ON_SCENE:
+            continue
+        routable_dispatches.append(dispatch)
+    return routable_dispatches
 
 
 def _accepted_assignments_from_active_dispatches(

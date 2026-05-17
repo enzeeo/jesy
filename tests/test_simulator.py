@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from httpx import ASGITransport, AsyncClient
 
@@ -110,6 +111,50 @@ async def test_sim_start_creates_incidents_and_broadcasts():
 
         s = await ac.get("/sim/status")
         assert s.json()["events_emitted"] == 5
+
+
+async def test_sim_start_stages_road_block_updates():
+    state = AppState()
+    app = create_app(state=state)
+    transport = ASGITransport(app=app)
+    agen = state.events.subscribe()
+    road_counts: list[int] = []
+    next_event: asyncio.Task | None = None
+
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            next_event = asyncio.create_task(agen.__anext__())
+            await asyncio.sleep(0.01)
+            r = await ac.post(
+                "/sim/start",
+                json={"count": 1, "demo_window_s": 0.3, "road_block_updates": 2},
+            )
+            assert r.status_code == 200
+
+            deadline = asyncio.get_running_loop().time() + 1.5
+            while len(road_counts) < 3 and asyncio.get_running_loop().time() < deadline:
+                event = await asyncio.wait_for(next_event, timeout=1.0)
+                if event["type"] == "road_access_updated":
+                    road_counts.append(event["data"]["hard_avoid_count"])
+                next_event = asyncio.create_task(agen.__anext__())
+
+        assert road_counts == [2, 3, 4]
+        road_access = await state.road_access.get()
+        assert len(road_access["features"]) == 4
+    finally:
+        sim = getattr(state, "_sim", None)
+        if sim is not None:
+            await sim.stop()
+        road_block_task = getattr(state, "_road_block_task", None)
+        if road_block_task is not None:
+            road_block_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await road_block_task
+        if next_event is not None and not next_event.done():
+            next_event.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await next_event
+        await agen.aclose()
 
 
 async def test_sim_idempotent_replay():

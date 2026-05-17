@@ -701,6 +701,55 @@ async def test_optimize_endpoint_freezes_active_dispatch_from_backend_state():
     assert route[0]["assignment_reason"] == "accepted_leg_frozen"
 
 
+async def test_optimize_endpoint_routes_on_scene_responder_without_completing_assignment():
+    from httpx import ASGITransport, AsyncClient
+
+    from disaster.app.deps import AppState
+    from disaster.app.main import create_app
+    from disaster.models import IncidentStatus
+    from disaster.snowflake import SnowflakeWriter
+
+    async def noop(_table, _rows): pass
+
+    state = AppState()
+    responder = await state.responders.upsert(_responder("ALS-1", 19.70, -155.00))
+    active_incident = await state.incidents.insert(_incident(19.90, -155.00, priority=0.30))
+    app = create_app(snowflake_writer=SnowflakeWriter(noop), state=state)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        optimized = (await client.post("/routing/optimize")).json()
+        active_leg_id = optimized["routes"][str(responder.id)][0]["leg_id"]
+        started = await client.post(
+            "/routing/dispatches/start",
+            json={
+                "route_id": optimized["route_id"],
+                "leg_id": active_leg_id,
+                "started_by": "dispatcher-a",
+            },
+        )
+        assert started.status_code == 200
+
+        await state.responders.upsert(responder.model_copy(update={
+            "location": active_incident.location,
+            "status": ResponderStatus.ON_SCENE,
+            "assigned_incident_id": active_incident.id,
+        }))
+        await state.incidents.update(active_incident.model_copy(update={"status": IncidentStatus.ON_SCENE}))
+        next_incident = await state.incidents.insert(_incident(19.701, -155.00, priority=0.95))
+
+        recomputed = await client.post("/routing/optimize")
+        active_assignment = await client.get(f"/responders/{responder.id}/assignment")
+
+    assert recomputed.status_code == 200
+    route = recomputed.json()["routes"][str(responder.id)]
+    assert route[0]["target_id"] == str(next_incident.id)
+    assert route[0]["assignment_reason"] == "weighted_flow_min_cost"
+    assert route[0]["from_location"]["lat"] == pytest.approx(active_incident.location.lat)
+    assert active_assignment.status_code == 200
+    assert active_assignment.json()["incident_id"] == str(active_incident.id)
+
+
 async def test_complete_assignment_releases_responder_for_next_optimized_call():
     import asyncio
     from datetime import UTC, datetime, timedelta

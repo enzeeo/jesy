@@ -59,8 +59,15 @@ function getRecommendedDispatch(
 
   for (const [responderId, legs] of Object.entries(routingResponse.routes)) {
     const responder = responders.find((unit) => unit.id === responderId);
-    if (responder?.assigned_incident_id) continue;
-    if (responder && responder.status !== "idle" && responder.status !== "assigned") continue;
+    if (responder?.assigned_incident_id && responder.status !== "on_scene") continue;
+    if (
+      responder
+      && responder.status !== "idle"
+      && responder.status !== "assigned"
+      && responder.status !== "on_scene"
+    ) {
+      continue;
+    }
 
     for (const leg of legs) {
       const targetIncidentId = getLegIncidentId(leg);
@@ -517,6 +524,10 @@ export default function Dashboard() {
   const startDispatch = useCallback(async (dispatch: RecommendedDispatch) => {
     if (!dispatch.routeId || !dispatch.leg.leg_id) {
       setDispatchError("Route identifiers unavailable.");
+      return;
+    }
+    if (dispatch.responder?.status === "on_scene") {
+      setDispatchError("Complete current aid before sending the next route.");
       return;
     }
 

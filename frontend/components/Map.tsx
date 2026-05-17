@@ -100,6 +100,11 @@ function acceptedRouteIncidentKey(route: AcceptedRouteLine): string | null {
   return `${route.responderId}:${incidentId}`;
 }
 
+function isCurrentOnSceneAssignment(responder: ResponderUnit | undefined, leg: RouteLeg): boolean {
+  if (responder?.status !== "on_scene" || !responder.assigned_incident_id) return false;
+  return getLegIncidentId(leg) === responder.assigned_incident_id;
+}
+
 export function MapView({
   incidents,
   responders,
@@ -443,8 +448,8 @@ export function MapView({
     const renderedAcceptedKeys = new Set<string>();
     const features = Object.entries(routingResponse?.routes ?? {}).flatMap(([responderId, legs]) => {
       const responder = responders.find((unit) => unit.id === responderId);
-      if (responder?.status === "on_scene") return [];
-      return legs.map((leg, index) => {
+      return legs.flatMap((leg, index) => {
+        if (isCurrentOnSceneAssignment(responder, leg)) return [];
         const routeKey = routeFeatureKey(routingResponse?.route_id, leg);
         const incidentId = getLegIncidentId(leg);
         const incidentKey = incidentId ? `${responderId}:${incidentId}` : null;
@@ -453,7 +458,7 @@ export function MapView({
         const displayLeg = acceptedRoute?.leg ?? leg;
         const accepted = Boolean(acceptedRoute) || (routeKey ? acceptedRouteKeys.has(routeKey) : false);
         if (acceptedRoute) renderedAcceptedKeys.add(`${acceptedRoute.routeId}:${acceptedRoute.legId}`);
-        return {
+        return [{
           type: "Feature" as const,
           geometry: {
             type: "LineString" as const,
@@ -475,16 +480,16 @@ export function MapView({
             provider_status: displayLeg.provider_status ?? null,
             assignment_reason: displayLeg.assignment_reason ?? null,
           },
-        };
+        }];
       });
     });
 
     for (const acceptedRoute of acceptedRoutes) {
       const responder = responders.find((unit) => unit.id === acceptedRoute.responderId);
-      if (responder?.status === "on_scene") continue;
       const acceptedKey = `${acceptedRoute.routeId}:${acceptedRoute.legId}`;
       if (renderedAcceptedKeys.has(acceptedKey)) continue;
       const incidentId = getLegIncidentId(acceptedRoute.leg);
+      if (isCurrentOnSceneAssignment(responder, acceptedRoute.leg)) continue;
       features.push({
         type: "Feature" as const,
         geometry: {

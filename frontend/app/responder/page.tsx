@@ -102,7 +102,17 @@ export default function ResponderPage() {
     if (event.type === "responder_location_updated") {
       const responder = getResponderFromLocationEvent(event.data as ResponderLocationUpdatedData);
       if (!responder) return;
-      setResponders((previous) => previous.map((unit) => unit.id === responder.id ? responder : unit));
+      setResponders((previous) => previous.map((unit) => {
+        if (unit.id !== responder.id) return unit;
+        if (unit.status === "on_scene" && responder.status !== "on_scene") {
+          return {
+            ...responder,
+            status: "on_scene",
+            assigned_incident_id: unit.assigned_incident_id ?? responder.assigned_incident_id,
+          };
+        }
+        return responder;
+      }));
       if (responder.id === selectedResponderId) {
         setManualLat(responder.location.lat.toFixed(5));
         setManualLng(responder.location.lng.toFixed(5));
@@ -224,7 +234,9 @@ export default function ResponderPage() {
   const incidentId = assignment?.incident_id ?? assignment?.incident?.id ?? leg?.incident_id ?? leg?.target_id ?? null;
   const etaSeconds = assignment?.eta_seconds ?? leg?.eta_seconds ?? null;
   const distanceKm = assignment?.distance_km ?? leg?.distance_km ?? null;
-  const canCompleteAid = Boolean(assignment && selectedResponder?.status === "on_scene");
+  const canCompleteAid = Boolean(
+    assignment && (selectedResponder?.status === "on_scene" || assignment.status === "on_scene")
+  );
 
   return (
     <main className="h-screen overflow-y-auto bg-bg-base text-fg-primary">

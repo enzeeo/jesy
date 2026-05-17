@@ -36,6 +36,7 @@ export function IncidentDetail({
 }: Props) {
   const v = SEVERITY_VISUAL[incident.severity];
   const [escalating, setEscalating] = useState(false);
+  const dispatchPreviewOnly = recommendedDispatch?.responder?.status === "on_scene";
 
   async function escalate(to: Severity) {
     if (to === incident.severity) return;
@@ -112,7 +113,7 @@ export function IncidentDetail({
                   </div>
                 </div>
                 <button
-                  disabled={dispatching || !recommendedDispatch.routeId || !recommendedDispatch.leg.leg_id}
+                  disabled={dispatching || dispatchPreviewOnly || !recommendedDispatch.routeId || !recommendedDispatch.leg.leg_id}
                   onClick={() => onStartDispatch(recommendedDispatch)}
                   className="mono border border-status-good px-3 py-1 text-xs font-bold uppercase text-status-good
                              hover:bg-bg-elev disabled:cursor-not-allowed disabled:border-border-strong
@@ -123,6 +124,9 @@ export function IncidentDetail({
               </div>
               {!recommendedDispatch.routeId || !recommendedDispatch.leg.leg_id ? (
                 <div className="mono text-xs text-status-warn">Route identifiers unavailable.</div>
+              ) : null}
+              {dispatchPreviewOnly ? (
+                <div className="mono text-xs text-status-warn">Preview only until aid complete.</div>
               ) : null}
               {dispatchError ? <div className="mono text-xs text-status-warn">{dispatchError}</div> : null}
             </div>
