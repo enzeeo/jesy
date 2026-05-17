@@ -41,7 +41,7 @@ def test_severity_distribution_approximately_matches_profile():
 
 def test_asheville_land_anchor_locations():
     """All incidents stay near known Asheville land anchors without stacking on exact points."""
-    events = generate_texas_flood_profile(count=100)
+    events = generate_texas_flood_profile(count=200)
     unique_points = {
         (round(e.incident.location.lat, 6), round(e.incident.location.lng, 6))
         for e in events
@@ -59,7 +59,7 @@ def test_asheville_land_anchor_locations():
         )
         assert nearest_anchor_km <= 0.75
         assert 35.53 < e.incident.location.lat < 35.66
-        assert -82.66 < e.incident.location.lng < -82.48
+        assert -82.66 < e.incident.location.lng < -82.47
 
 
 def test_asheville_land_anchors_avoid_default_flood_polygons():

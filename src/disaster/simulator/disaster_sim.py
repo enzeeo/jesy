@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ from disaster.models import (
     Severity,
     Victim,
 )
+from disaster.road_access import demo_road_access
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +58,27 @@ ASHEVILLE_CALLER_ANCHORS = (
     (35.5909, -82.5024, "Beverly Hills"),
     (35.6357, -82.5826, "Weaverville Road"),
 )
+ASHEVILLE_CALLER_SPREAD_RADIUS_KM = 0.65
+_KM_PER_LATITUDE_DEGREE = 110.574
+_KM_PER_LONGITUDE_DEGREE_AT_EQUATOR = 111.320
+_GOLDEN_ANGLE_DEGREES = 137.507764
+_MAX_LOCATION_ATTEMPTS = 96
+
+
+def _load_default_exclusion_polygons() -> tuple[tuple[tuple[float, float], ...], ...]:
+    polygons: list[tuple[tuple[float, float], ...]] = []
+    for feature in demo_road_access()["features"]:
+        geometry = feature.get("geometry", {})
+        if geometry.get("type") != "Polygon":
+            continue
+        coordinates = geometry.get("coordinates", [])
+        if not coordinates:
+            continue
+        polygons.append(tuple((float(lng), float(lat)) for lng, lat in coordinates[0]))
+    return tuple(polygons)
+
+
+_DEFAULT_EXCLUSION_POLYGONS = _load_default_exclusion_polygons()
 
 _SEVERITY_DIST = [
     (Severity.IMMEDIATE, 0.12),
@@ -104,14 +127,74 @@ def _sample_vulnerabilities(rng: random.Random, age: int) -> list[str]:
     return vulns
 
 
-def _sample_location(rng: random.Random) -> Location:
-    """Sample only from approved Asheville land anchors."""
-    lat, lng, landmark = rng.choice(ASHEVILLE_CALLER_ANCHORS)
-    return Location(
-        lat=lat,
-        lng=lng,
-        description=f"{landmark} area",
+def _sample_location(
+    rng: random.Random,
+    *,
+    sequence_index: int,
+    used_points: set[tuple[float, float]],
+) -> Location:
+    """Sample a unique land-safe point near approved Asheville caller anchors."""
+
+    anchor_start = rng.randrange(len(ASHEVILLE_CALLER_ANCHORS))
+    for attempt in range(_MAX_LOCATION_ATTEMPTS):
+        anchor_index = (anchor_start + attempt) % len(ASHEVILLE_CALLER_ANCHORS)
+        anchor_lat, anchor_lng, landmark = ASHEVILLE_CALLER_ANCHORS[anchor_index]
+        lat, lng = _spread_from_anchor(
+            anchor_lat=anchor_lat,
+            anchor_lng=anchor_lng,
+            sequence_index=sequence_index,
+            attempt=attempt,
+        )
+        point = (lat, lng)
+        if point in used_points or _is_excluded_point(lng, lat):
+            continue
+        used_points.add(point)
+        return Location(
+            lat=lat,
+            lng=lng,
+            description=f"{landmark} area",
+        )
+
+    raise RuntimeError("unable to sample a unique Asheville land-safe caller location")
+
+
+def _spread_from_anchor(
+    *,
+    anchor_lat: float,
+    anchor_lng: float,
+    sequence_index: int,
+    attempt: int,
+) -> tuple[float, float]:
+    ring = (sequence_index + attempt) % 9
+    radius_km = 0.14 + (ring * 0.055)
+    radius_km = min(radius_km, ASHEVILLE_CALLER_SPREAD_RADIUS_KM)
+    bearing = math.radians((sequence_index * _GOLDEN_ANGLE_DEGREES + attempt * 31.0) % 360)
+    latitude_offset = (radius_km * math.cos(bearing)) / _KM_PER_LATITUDE_DEGREE
+    longitude_scale = _KM_PER_LONGITUDE_DEGREE_AT_EQUATOR * math.cos(math.radians(anchor_lat))
+    longitude_offset = (radius_km * math.sin(bearing)) / longitude_scale
+    return (
+        round(anchor_lat + latitude_offset, 6),
+        round(anchor_lng + longitude_offset, 6),
     )
+
+
+def _is_excluded_point(lng: float, lat: float) -> bool:
+    return any(
+        _point_in_polygon(lng, lat, polygon)
+        for polygon in _DEFAULT_EXCLUSION_POLYGONS
+    )
+
+
+def _point_in_polygon(x: float, y: float, polygon: tuple[tuple[float, float], ...]) -> bool:
+    inside = False
+    j = len(polygon) - 1
+    for i, vertex in enumerate(polygon):
+        xi, yi = vertex
+        xj, yj = polygon[j]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
 
 
 def _build_victim(rng: random.Random, severity: Severity) -> Victim:
@@ -170,6 +253,7 @@ def generate_texas_flood_profile(
         impact_time = datetime.now(UTC)
 
     events: list[SimEvent] = []
+    used_points: set[tuple[float, float]] = set()
     for i in range(count):
         sev = _sample_severity(rng)
         delay_s = _emit_delay_seconds(i, count, demo_window_s)
@@ -179,7 +263,7 @@ def generate_texas_flood_profile(
         incident = IncidentReport(
             timestamp=ts,
             source=IncidentSource.SIMULATED,
-            location=_sample_location(rng),
+            location=_sample_location(rng, sequence_index=i, used_points=used_points),
             victims=[_build_victim(rng, sev)],
             severity=sev,
             confidence=1.0,
