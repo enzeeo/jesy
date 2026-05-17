@@ -2,30 +2,31 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from httpx import ASGITransport, AsyncClient
 
 from disaster.app.deps import AppState
 from disaster.app.main import create_app
 from disaster.models import Severity
-from disaster.simulator import DisasterSimulator, generate_hilo_tsunami_profile
+from disaster.simulator import DisasterSimulator, generate_texas_flood_profile
 
 # ── Generator ────────────────────────────────────────────────────────────────
 
 def test_generates_requested_count():
-    events = generate_hilo_tsunami_profile(count=50)
+    events = generate_texas_flood_profile(count=50)
     assert len(events) == 50
 
 
 def test_deterministic_given_seed():
-    a = generate_hilo_tsunami_profile(count=10, seed=42)
-    b = generate_hilo_tsunami_profile(count=10, seed=42)
+    a = generate_texas_flood_profile(count=10, seed=42)
+    b = generate_texas_flood_profile(count=10, seed=42)
     assert [e.incident.severity for e in a] == [e.incident.severity for e in b]
     assert [e.external_id for e in a] == [e.external_id for e in b]
 
 
 def test_severity_distribution_approximately_matches_profile():
-    events = generate_hilo_tsunami_profile(count=500, seed=1)
+    events = generate_texas_flood_profile(count=500, seed=1)
     counts = {s: 0 for s in Severity}
     for e in events:
         counts[e.incident.severity] += 1
@@ -36,19 +37,19 @@ def test_severity_distribution_approximately_matches_profile():
 
 
 def test_coastal_weighting():
-    """All incidents land near the coastal corridor (lat near 19.73)."""
-    events = generate_hilo_tsunami_profile(count=100)
+    """All incidents land near the Galveston coastal corridor."""
+    events = generate_texas_flood_profile(count=100)
     for e in events:
-        assert 19.70 < e.incident.location.lat < 19.75
+        assert 29.27 < e.incident.location.lat < 29.33
 
 
 def test_external_ids_unique():
-    events = generate_hilo_tsunami_profile(count=200)
+    events = generate_texas_flood_profile(count=200)
     assert len({e.external_id for e in events}) == 200
 
 
 def test_emit_delays_monotonic_and_within_window():
-    events = generate_hilo_tsunami_profile(count=100, demo_window_s=60.0)
+    events = generate_texas_flood_profile(count=100, demo_window_s=60.0)
     delays = [e.delay_s for e in events]
     assert delays == sorted(delays)
     assert delays[0] >= 0.0
@@ -110,6 +111,50 @@ async def test_sim_start_creates_incidents_and_broadcasts():
 
         s = await ac.get("/sim/status")
         assert s.json()["events_emitted"] == 5
+
+
+async def test_sim_start_stages_road_block_updates():
+    state = AppState()
+    app = create_app(state=state)
+    transport = ASGITransport(app=app)
+    agen = state.events.subscribe()
+    road_counts: list[int] = []
+    next_event: asyncio.Task | None = None
+
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            next_event = asyncio.create_task(agen.__anext__())
+            await asyncio.sleep(0.01)
+            r = await ac.post(
+                "/sim/start",
+                json={"count": 1, "demo_window_s": 0.3, "road_block_updates": 2},
+            )
+            assert r.status_code == 200
+
+            deadline = asyncio.get_running_loop().time() + 1.5
+            while len(road_counts) < 3 and asyncio.get_running_loop().time() < deadline:
+                event = await asyncio.wait_for(next_event, timeout=1.0)
+                if event["type"] == "road_access_updated":
+                    road_counts.append(event["data"]["hard_avoid_count"])
+                next_event = asyncio.create_task(agen.__anext__())
+
+        assert road_counts == [2, 3, 4]
+        road_access = await state.road_access.get()
+        assert len(road_access["features"]) == 4
+    finally:
+        sim = getattr(state, "_sim", None)
+        if sim is not None:
+            await sim.stop()
+        road_block_task = getattr(state, "_road_block_task", None)
+        if road_block_task is not None:
+            road_block_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await road_block_task
+        if next_event is not None and not next_event.done():
+            next_event.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await next_event
+        await agen.aclose()
 
 
 async def test_sim_idempotent_replay():

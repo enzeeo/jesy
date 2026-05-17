@@ -54,7 +54,24 @@ CREATE TABLE IF NOT EXISTS responder_dispatches (
     dispatched_at         TIMESTAMP_TZ  NOT NULL,
     distance_km           FLOAT         NOT NULL,
     eta_seconds           FLOAT         NOT NULL,
-    solver                VARCHAR(20)   NOT NULL,    -- greedy | vrp
+    solver                VARCHAR(40)   NOT NULL,    -- greedy | vrp | weighted_flow
+    _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- ── responder_arrivals ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS responder_arrivals (
+    responder_id          VARCHAR(36)   NOT NULL,
+    callsign              VARCHAR(40)   NOT NULL,
+    incident_id           VARCHAR(36)   NOT NULL,
+    cluster_id            VARCHAR(120),
+    arrival_timestamp     TIMESTAMP_TZ  NOT NULL,
+    ping_lat              FLOAT         NOT NULL,
+    ping_lng              FLOAT         NOT NULL,
+    accuracy_m            FLOAT         NOT NULL,
+    route_id              VARCHAR(120),
+    assignment_id         VARCHAR(120),
+    detection_method      VARCHAR(80)   NOT NULL,
+    distance_m            FLOAT         NOT NULL,
     _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
 );
 

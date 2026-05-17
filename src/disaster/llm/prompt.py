@@ -28,14 +28,15 @@ GLOBAL_PROTOCOL: Final[str] = (
 
 # ── Segment 2: disaster context for current deployment ────────────────────────
 # This block is loaded from the active DisasterProfile at startup.
-# For demo: 1960 Hilo tsunami parameters.
+# For demo: Texas Gulf Coast flood surge parameters.
 DISASTER_CONTEXT: Final[str] = (
-    "ACTIVE DISASTER: Tsunami event, Hilo Hawaii, coastal radius 5 km.\n"
+    "ACTIVE DISASTER: Hurricane flood surge, Galveston Texas, coastal radius 8 km.\n"
     "Expected injuries: drowning, blunt trauma, lacerations, hypothermia, crush "
     "injuries from debris. Vulnerable populations: coastal residents, tourists at "
-    "Banyan Drive hotels, fishermen at Wailoa Harbor, schoolchildren at Hilo Union "
-    "Elementary. Communication may be intermittent. Power may be out in NW sector. "
-    "Roads flooded: Kamehameha Ave north of Mamo St, Bayfront Hwy entire length.\n"
+    "Seawall Boulevard hotels, dock workers at Pier 21, patients near the UTMB "
+    "Health campus. Communication may be intermittent. Power may be out in west "
+    "island sector. Roads flooded: Seawall Boulevard low points, Harborside Drive, "
+    "Broadway Avenue J near 25th Street.\n"
 )
 
 # ── Pinned SHA256 of the prefix ───────────────────────────────────────────────
@@ -43,7 +44,7 @@ DISASTER_CONTEXT: Final[str] = (
 #   python -c "from disaster.llm.prompt import prefix_bytes; \
 #              import hashlib; print(hashlib.sha256(prefix_bytes()).hexdigest())"
 PREFIX_SHA256: Final[str] = (
-    "37d76d620ab13366bdc205865cdac42e138bd958cd1163e1ee966252cb85d412"
+    "2433438ff24af6036a07d9b234213114a625af6c1623d2f92509da90321697d0"
 )
 
 

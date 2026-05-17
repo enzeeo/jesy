@@ -35,8 +35,8 @@ CORTEX_CLUSTER_SQL = """
 WITH recent AS (
     SELECT
         CASE
-            WHEN lat > 19.73 THEN 'NORTH'
-            WHEN lat < 19.71 THEN 'SOUTH'
+            WHEN lat > 29.31 THEN 'NORTH'
+            WHEN lat < 29.29 THEN 'SOUTH'
             ELSE 'CENTRAL'
         END                                AS sector,
         CASE
@@ -102,9 +102,9 @@ def detect_clusters(
         return []
 
     def _sector(i: IncidentReport) -> str:
-        if i.location.lat > 19.73:
+        if i.location.lat > 29.31:
             return "NORTH"
-        if i.location.lat < 19.71:
+        if i.location.lat < 29.29:
             return "SOUTH"
         return "CENTRAL"
 

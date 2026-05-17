@@ -5,6 +5,8 @@ GET  /sim/status — running, counts
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -12,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from disaster.road_access import demo_road_access_with_simulated_blocks
+from disaster.routing.weighted import summarize_road_access
 from disaster.simulator import DisasterSimulator
 from disaster.triage import score
 
@@ -52,9 +56,10 @@ def _get_or_create_sim(state) -> DisasterSimulator:
 
 class StartPayload(BaseModel):
     count: int = Field(default=200, ge=1, le=2000)
-    run_id: str = Field(default="hilo-1960", min_length=1, max_length=64)
+    run_id: str = Field(default="texas-gulf-flood", min_length=1, max_length=64)
     seed: int = 42
     demo_window_s: float = Field(default=60.0, gt=0.0)
+    road_block_updates: int = Field(default=4, ge=0, le=20)
 
 
 @router.post("/start")
@@ -63,6 +68,9 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
     sim = _get_or_create_sim(state)
     if sim.running:
         return {"status": "already_running", **sim.snapshot()}
+    await _cancel_road_block_updates(state)
+    road_access = await state.road_access.set(demo_road_access_with_simulated_blocks(0))
+    await _publish_road_access_updated(state, road_access)
     await sim.start(
         count=payload.count,
         run_id=payload.run_id,
@@ -74,6 +82,11 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
         "data": {"run_id": payload.run_id, "count": payload.count, "window_s": payload.demo_window_s},
         "sequence_id": state.events.next_sequence_id(),
     })
+    _start_road_block_updates(
+        state,
+        update_count=payload.road_block_updates,
+        demo_window_s=payload.demo_window_s,
+    )
     return {"status": "started", **sim.snapshot()}
 
 
@@ -82,6 +95,7 @@ async def stop_sim(request: Request) -> dict[str, Any]:
     state = _state(request)
     sim = _get_or_create_sim(state)
     await sim.stop()
+    await _cancel_road_block_updates(state)
     return {"status": "stopped", **sim.snapshot()}
 
 
@@ -90,3 +104,48 @@ async def sim_status(request: Request) -> dict[str, Any]:
     state = _state(request)
     sim = _get_or_create_sim(state)
     return sim.snapshot()
+
+
+async def _publish_road_access_updated(state: AppState, road_access: dict[str, Any]) -> None:
+    await state.events.publish({
+        "type": "road_access_updated",
+        "data": summarize_road_access(road_access),
+        "sequence_id": state.events.next_sequence_id(),
+    })
+
+
+def _start_road_block_updates(
+    state: AppState,
+    *,
+    update_count: int,
+    demo_window_s: float,
+) -> None:
+    if update_count <= 0:
+        return
+    interval_s = max(0.05, demo_window_s / (update_count + 1))
+    state._road_block_task = asyncio.create_task(
+        _run_road_block_updates(state, update_count=update_count, interval_s=interval_s),
+        name="road-block-sim",
+    )
+
+
+async def _run_road_block_updates(
+    state: AppState,
+    *,
+    update_count: int,
+    interval_s: float,
+) -> None:
+    for block_count in range(1, update_count + 1):
+        await asyncio.sleep(interval_s)
+        road_access = await state.road_access.set(demo_road_access_with_simulated_blocks(block_count))
+        await _publish_road_access_updated(state, road_access)
+
+
+async def _cancel_road_block_updates(state: AppState) -> None:
+    task = getattr(state, "_road_block_task", None)
+    if task is None:
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    state._road_block_task = None
