@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ConversationShell } from "@/components/ConversationShell";
 
 export const metadata: Metadata = {
   title: "Disaster Relief Caller",
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ConversationShell>{children}</ConversationShell>
+      </body>
     </html>
   );
 }

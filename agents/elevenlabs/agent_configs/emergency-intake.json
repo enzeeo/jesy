@@ -1,0 +1,135 @@
+{
+  "name": "Emergency Intake",
+  "conversation_config": {
+    "asr": {
+      "quality": "high",
+      "provider": "elevenlabs",
+      "user_input_audio_format": "pcm_16000",
+      "keywords": [
+        "fire",
+        "trapped",
+        "flood",
+        "evacuate",
+        "injured",
+        "bleeding",
+        "breathing"
+      ]
+    },
+    "turn": {
+      "turn_timeout": 7,
+      "silence_end_call_timeout": -1,
+      "mode": "turn"
+    },
+    "tts": {
+      "model_id": "eleven_turbo_v2",
+      "voice_id": "EXAVITQu4vr4xnSDxMaL",
+      "supported_voices": [],
+      "agent_output_audio_format": "pcm_16000",
+      "optimize_streaming_latency": 3,
+      "stability": 0.7,
+      "speed": 0.95,
+      "similarity_boost": 0.75,
+      "pronunciation_dictionary_locators": []
+    },
+    "conversation": {
+      "text_only": false,
+      "max_duration_seconds": 600,
+      "client_events": [
+        "audio",
+        "interruption",
+        "agent_response",
+        "user_transcript",
+        "conversation_initiation_metadata",
+        "agent_tool_request",
+        "agent_tool_response",
+        "agent_tool_response_full_payload",
+        "vad_score"
+      ]
+    },
+    "language_presets": {},
+    "agent": {
+      "first_message": "You've reached emergency assistance. I'm here with you. Can you tell me where you are and what's happening?",
+      "language": "en",
+      "dynamic_variables": {
+        "dynamic_variable_placeholders": {
+          "conversation_id": "unknown-conversation",
+          "caller_lat": "0",
+          "caller_lng": "0",
+          "device_id": "unknown-device",
+          "geo_source": "fallback"
+        }
+      },
+      "prompt": {
+        "prompt": "You are an emergency intake assistant for a disaster response dispatcher. Your job is to gather structured information while keeping the caller calm. You are NOT a medical professional and must not give medical advice.\n\nALWAYS:\n- Speak slowly and calmly. Acknowledge what the caller says before asking the next question.\n- Confirm location TWICE (once when first stated, once to verify).\n- Ask one question at a time. Do not stack questions.\n- If the caller is panicking, acknowledge first: \"I hear you. Help is being arranged. Stay with me.\"\n\nREQUIRED INFORMATION (gather in priority order):\n1. Location (cross-streets, landmarks, address \u2014 anything specific)\n2. What is happening (fire, water, medical, trapped, other)\n3. How many people are with them\n4. Visible injuries or medical needs\n5. Mobility \u2014 can they walk, are they trapped\n6. Resources they have (water, phone battery, medical supplies)\n\nUSE YOUR TOOLS:\n- On the FIRST turn after you have confirmed location, call create_incident_provisional with the location. Pass {{conversation_id}} for the conversation_id parameter. This creates an incident record the dispatcher can immediately see.\n- As you learn victim details (mobility, breathing, injuries), call update_assessment with the new fields. Pass the incident_id returned by create_incident_provisional. Patch ONLY the fields you learned this turn \u2014 do not re-send unchanged data.\n- If the caller asks \"is help coming?\" or \"how long?\", call query_nearby_resources with their lat and lng. Tell them honestly what the response says. NEVER invent ETAs.\n- When the call is ending (caller is safe to disconnect, you have gathered what you can), call finalize with the incident_id and the full transcript so the system can run authoritative extraction.\n\nNEVER:\n- Promise specific response times.\n- Diagnose medical conditions.\n- Give first aid procedures (CPR, etc.) \u2014 keep the caller calm and with you instead.\n- Disconnect before calling finalize.\n\nDynamic variables available in this conversation:\n  {{conversation_id}}  \u2014 pass to create_incident_provisional\n  {{caller_lat}}       \u2014 caller's GPS latitude (may be a default fallback)\n  {{caller_lng}}       \u2014 caller's GPS longitude\n  {{device_id}}        \u2014 opaque caller device id\n  {{geo_source}}       \u2014 \"gps\" or \"fallback\" \u2014 if \"fallback\", verbally confirm the location with the caller before calling create_incident_provisional",
+        "llm": "gemini-2.5-flash",
+        "temperature": 0.2,
+        "max_tokens": -1,
+        "tool_ids": [
+          "tool_1301krszsj3te1nb2nkhxrwd5n0z",
+          "tool_4301krszsj9vek18pns8g74mp6zq",
+          "tool_5701krszsj7zfpx9mgqn9wtvsne0",
+          "tool_8901krszdz6ren0837had93atmng"
+        ],
+        "mcp_server_ids": [],
+        "native_mcp_server_ids": [],
+        "knowledge_base": [],
+        "ignore_default_personality": false,
+        "rag": {
+          "enabled": false,
+          "embedding_model": "e5_mistral_7b_instruct",
+          "max_vector_distance": 0.6,
+          "max_documents_length": 50000,
+          "max_retrieved_rag_chunks_count": 20
+        },
+        "custom_llm": null
+      }
+    }
+  },
+  "platform_settings": {
+    "auth": {
+      "enable_auth": false,
+      "allowlist": [],
+      "shareable_token": null
+    },
+    "evaluation": {
+      "criteria": []
+    },
+    "overrides": {
+      "conversation_config_override": {
+        "tts": {
+          "voice_id": false
+        },
+        "conversation": {
+          "text_only": false
+        },
+        "agent": {
+          "first_message": false,
+          "language": false,
+          "prompt": {
+            "prompt": false
+          }
+        }
+      },
+      "custom_llm_extra_body": false,
+      "enable_conversation_initiation_client_data_from_webhook": false
+    },
+    "call_limits": {
+      "agent_concurrency_limit": -1,
+      "daily_limit": 1000,
+      "bursting_enabled": true
+    },
+    "privacy": {
+      "record_voice": true,
+      "retention_days": 30,
+      "delete_transcript_and_pii": false,
+      "delete_audio": false,
+      "apply_to_existing_conversations": false,
+      "zero_retention_mode": false
+    }
+  },
+  "tags": [
+    "environment:dev",
+    "hackathon",
+    "disaster-response"
+  ]
+}

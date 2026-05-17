@@ -1,0 +1,42 @@
+{
+  "name": "query_nearby_resources",
+  "description": "Ask the system what dispatch resources are nearby. Use this when the caller asks about response time. Honestly report what the response says — never invent ETAs.",
+  "type": "webhook",
+  "api_schema": {
+    "url": "https://indicatively-perissodactylous-mable.ngrok-free.dev/intake/voice/tool/query_nearby_resources",
+    "method": "POST",
+    "request_body_schema": {
+      "type": "object",
+      "description": "Geographic query for nearby dispatch units.",
+      "required": ["lat", "lng"],
+      "properties": {
+        "lat": {
+          "type": "number",
+          "description": "Latitude of the caller (or incident location)."
+        },
+        "lng": {
+          "type": "number",
+          "description": "Longitude of the caller (or incident location)."
+        },
+        "radiusKm": {
+          "type": "number",
+          "description": "Search radius in kilometers. Default 5 if omitted."
+        },
+        "incidentId": {
+          "type": "string",
+          "description": "id returned by create_incident_provisional. Optional."
+        }
+      }
+    },
+    "request_headers": {
+      "Content-Type": "application/json"
+    }
+  },
+  "response_timeout_secs": 5,
+  "dynamic_variables": {
+    "dynamic_variable_placeholders": {}
+  },
+  "assignments": [],
+  "disable_interruptions": false,
+  "force_pre_tool_speech": false
+}

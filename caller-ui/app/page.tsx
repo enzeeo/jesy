@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { CallerShell } from "@/components/CallerShell";
+import { CallButton } from "@/components/CallButton";
 
 export default function Home() {
+  const agentId = process.env.NEXT_PUBLIC_ELEVENLABS_AGENT_ID;
+
   return (
     <CallerShell>
       <section>
@@ -14,13 +17,7 @@ export default function Home() {
       </section>
 
       <div className="mt-8 grid gap-3">
-        <button
-          type="button"
-          onClick={() => alert("Voice support is coming soon. Please use Text for now.")}
-          className="min-h-20 border border-sev-immediate bg-sev-immediate px-6 py-5 text-left text-2xl font-semibold text-white shadow-lg shadow-black/30"
-        >
-          Call for help
-        </button>
+        <CallButton agentId={agentId} />
         <Link
           href="/incident"
           className="min-h-20 border border-border-strong bg-bg-panel px-6 py-5 text-2xl font-semibold text-fg-primary hover:bg-bg-elev"

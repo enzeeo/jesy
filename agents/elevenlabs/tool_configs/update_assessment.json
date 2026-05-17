@@ -1,0 +1,90 @@
+{
+  "name": "update_assessment",
+  "description": "Patch the incident with new victim details as the caller shares them. Re-runs triage on the backend. Only include fields you actually learned this turn — do NOT re-send unchanged data.",
+  "type": "webhook",
+  "api_schema": {
+    "url": "https://indicatively-perissodactylous-mable.ngrok-free.dev/intake/voice/tool/update_assessment",
+    "method": "POST",
+    "request_body_schema": {
+      "type": "object",
+      "description": "Patch fields into the primary victim record on an existing incident.",
+      "required": ["incidentId", "victim"],
+      "properties": {
+        "incidentId": {
+          "type": "string",
+          "description": "id returned by create_incident_provisional."
+        },
+        "victim": {
+          "type": "object",
+          "description": "Victim fields to patch. Include only what you learned this turn.",
+          "properties": {
+            "ageEstimate": {
+              "type": "integer",
+              "description": "Estimated age in years (0-120). Only if the caller stated it.",
+              "minimum": 0,
+              "maximum": 120
+            },
+            "injuries": {
+              "type": "array",
+              "description": "Short phrases naming visible injuries, e.g. 'leg laceration', 'burns'.",
+              "items": {
+                "type": "string",
+                "description": "One injury phrase."
+              }
+            },
+            "consciousness": {
+              "type": "string",
+              "description": "Level of responsiveness. Use 'unknown' if the caller can't tell.",
+              "enum": ["alert", "responds_to_voice", "responds_to_pain", "unresponsive", "unknown"]
+            },
+            "breathing": {
+              "type": "string",
+              "description": "Breathing status. 'spontaneous' = breathing normally; 'absent' = not breathing after airway opened.",
+              "enum": ["spontaneous", "after_airway", "absent", "unknown"]
+            },
+            "respiratoryRate": {
+              "type": "integer",
+              "description": "Breaths per minute, if observable.",
+              "minimum": 0,
+              "maximum": 80
+            },
+            "perfusion": {
+              "type": "string",
+              "description": "Capillary refill / pulse status. 'normal' = refill <2s OR radial pulse present.",
+              "enum": ["normal", "poor", "unknown"]
+            },
+            "mobility": {
+              "type": "string",
+              "description": "Mobility. 'walking' = can walk; 'cannot_follow_commands' = trapped or unresponsive.",
+              "enum": ["walking", "can_follow_commands", "cannot_follow_commands", "unknown"]
+            },
+            "vulnerabilities": {
+              "type": "array",
+              "description": "Vulnerability flags, e.g. mobility_dependent, oxygen, child, elderly.",
+              "items": {
+                "type": "string",
+                "description": "One vulnerability flag."
+              }
+            }
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "description": "Your confidence (0-1) in the patched assessment.",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      }
+    },
+    "request_headers": {
+      "Content-Type": "application/json"
+    }
+  },
+  "response_timeout_secs": 10,
+  "dynamic_variables": {
+    "dynamic_variable_placeholders": {}
+  },
+  "assignments": [],
+  "disable_interruptions": false,
+  "force_pre_tool_speech": false
+}

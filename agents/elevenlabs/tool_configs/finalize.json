@@ -1,0 +1,34 @@
+{
+  "name": "finalize",
+  "description": "Call at end of call to commit the authoritative extraction. Pass the full verbatim transcript and the incidentId so the system can merge LLM-extracted data into the provisional record. Always call this before disconnecting.",
+  "type": "webhook",
+  "api_schema": {
+    "url": "https://indicatively-perissodactylous-mable.ngrok-free.dev/intake/voice/finalize",
+    "method": "POST",
+    "request_body_schema": {
+      "type": "object",
+      "description": "Finalize the incident with the full call transcript.",
+      "required": ["transcript"],
+      "properties": {
+        "incidentId": {
+          "type": "string",
+          "description": "id returned by create_incident_provisional. If missing, a new incident will be created from the transcript."
+        },
+        "transcript": {
+          "type": "string",
+          "description": "Full verbatim call transcript."
+        }
+      }
+    },
+    "request_headers": {
+      "Content-Type": "application/json"
+    }
+  },
+  "response_timeout_secs": 30,
+  "dynamic_variables": {
+    "dynamic_variable_placeholders": {}
+  },
+  "assignments": [],
+  "disable_interruptions": false,
+  "force_pre_tool_speech": false
+}

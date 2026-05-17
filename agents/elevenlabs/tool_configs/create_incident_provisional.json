@@ -1,0 +1,46 @@
+{
+  "name": "create_incident_provisional",
+  "description": "Call this ONCE per call, as soon as you've confirmed the caller's location. Creates the incident record the dispatcher can immediately see on the map. Returns incidentId which you MUST pass to all subsequent tool calls. Idempotent on conversationId (safe to retry).",
+  "type": "webhook",
+  "api_schema": {
+    "url": "https://indicatively-perissodactylous-mable.ngrok-free.dev/intake/voice/tool/create_incident_provisional",
+    "method": "POST",
+    "request_body_schema": {
+      "type": "object",
+      "description": "Provisional incident creation payload.",
+      "required": ["conversationId", "lat", "lng", "description"],
+      "properties": {
+        "conversationId": {
+          "type": "string",
+          "description": "Pass the {{conversation_id}} dynamic variable verbatim."
+        },
+        "lat": {
+          "type": "number",
+          "description": "Caller latitude. Use {{caller_lat}} unless the caller corrected it."
+        },
+        "lng": {
+          "type": "number",
+          "description": "Caller longitude. Use {{caller_lng}} unless the caller corrected it."
+        },
+        "description": {
+          "type": "string",
+          "description": "Cross-streets, landmarks, or address the caller stated. Be specific."
+        },
+        "rawSummary": {
+          "type": "string",
+          "description": "One-sentence summary of the situation so far."
+        }
+      }
+    },
+    "request_headers": {
+      "Content-Type": "application/json"
+    }
+  },
+  "response_timeout_secs": 10,
+  "dynamic_variables": {
+    "dynamic_variable_placeholders": {}
+  },
+  "assignments": [],
+  "disable_interruptions": false,
+  "force_pre_tool_speech": false
+}
