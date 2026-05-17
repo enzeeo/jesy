@@ -48,19 +48,30 @@ CREATE TABLE IF NOT EXISTS voice_calls (
 );
 
 -- ── responder_dispatches ─────────────────────────────────────────────────────
--- NOTE: sim_run_id added 2026-05-17 for AAR per-run scoping. If your warehouse
--- already has the table without this column, run:
---   ALTER TABLE responder_dispatches ADD COLUMN sim_run_id VARCHAR(64);
--- Or drop+recreate (rehearsal data is disposable):
---   DROP TABLE responder_dispatches; -- then re-run this script
 CREATE TABLE IF NOT EXISTS responder_dispatches (
     responder_id          VARCHAR(36)   NOT NULL,
     incident_id           VARCHAR(36)   NOT NULL,
     dispatched_at         TIMESTAMP_TZ  NOT NULL,
     distance_km           FLOAT         NOT NULL,
     eta_seconds           FLOAT         NOT NULL,
-    solver                VARCHAR(20)   NOT NULL,    -- greedy | vrp
-    sim_run_id            VARCHAR(64),               -- per-run AAR scoping (nullable for pre-2026-05 rows)
+    solver                VARCHAR(40)   NOT NULL,    -- greedy | vrp | weighted_flow
+    _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- ── responder_arrivals ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS responder_arrivals (
+    responder_id          VARCHAR(36)   NOT NULL,
+    callsign              VARCHAR(40)   NOT NULL,
+    incident_id           VARCHAR(36)   NOT NULL,
+    cluster_id            VARCHAR(120),
+    arrival_timestamp     TIMESTAMP_TZ  NOT NULL,
+    ping_lat              FLOAT         NOT NULL,
+    ping_lng              FLOAT         NOT NULL,
+    accuracy_m            FLOAT         NOT NULL,
+    route_id              VARCHAR(120),
+    assignment_id         VARCHAR(120),
+    detection_method      VARCHAR(80)   NOT NULL,
+    distance_m            FLOAT         NOT NULL,
     _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
 );
 

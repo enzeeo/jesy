@@ -7,8 +7,8 @@ DisasterSimulator — generates synthetic incidents on a compressed temporal cur
   Replay     : feed them to /incidents at the demo cadence
   Idempotent : same (sim_run_id, external_id) is rejected by IncidentStore
 
-Profile: 1960 Hilo tsunami parameters.
-  - Coastal weighting: most incidents within 1 km of waterfront
+Profile: Texas Gulf Coast flood surge parameters.
+  - Coastal weighting: most incidents near the Galveston waterfront
   - Severity distribution: 12% Immediate, 35% Delayed, 50% Minor, 3% Deceased
   - Temporal: front-loaded (impact + 2 hours = 70% of incidents)
   - Vulnerabilities: 8% child, 18% elderly, 4% mobility-dep
@@ -37,10 +37,10 @@ from disaster.models import (
 
 log = logging.getLogger(__name__)
 
-# Hilo Bay center (1960 tsunami impact zone)
-_HILO_CENTER = (19.7297, -155.0900)
-_COASTAL_LAT = 19.7297
-_COASTAL_LNG_RANGE = (-155.105, -155.075)
+# Galveston, Texas center (Gulf Coast flood surge impact zone)
+_TEXAS_CENTER = (29.3013, -94.7977)
+_COASTAL_LAT = 29.3013
+_COASTAL_LNG_RANGE = (-94.830, -94.760)
 
 _SEVERITY_DIST = [
     (Severity.IMMEDIATE, 0.12),
@@ -57,11 +57,11 @@ _INJURIES_BY_SEVERITY: dict[Severity, list[str]] = {
 }
 
 _LANDMARKS = [
-    "Pier 1", "Pier 2", "Pier 3", "Pier 4",
-    "Bayfront Hwy", "Kamehameha Ave & Mamo St", "Banyan Drive",
-    "Hilo Hawaiian Hotel", "Wailoa Harbor", "Hilo Union Elementary",
-    "Reeds Bay", "Lyman Museum area", "Mooheau Bus Terminal",
-    "Hilo Farmers Market", "Liliuokalani Gardens",
+    "Pier 21", "Galveston Harbor", "The Strand", "Seawall Boulevard",
+    "Harborside Drive", "25th Street", "Broadway Avenue J",
+    "UTMB Health campus", "East End", "West End",
+    "Moody Gardens", "Stewart Beach", "Galveston Island Historic Pleasure Pier",
+    "Rosenberg Library area", "Texas City Dike",
 ]
 
 
@@ -149,10 +149,10 @@ class SimEvent:
     delay_s: float
 
 
-def generate_hilo_tsunami_profile(
+def generate_texas_flood_profile(
     *,
     count: int = 200,
-    run_id: str = "hilo-1960",
+    run_id: str = "texas-gulf-flood",
     seed: int = 42,
     demo_window_s: float = 60.0,
     impact_time: datetime | None = None,
@@ -190,6 +190,24 @@ def generate_hilo_tsunami_profile(
     return events
 
 
+def generate_hilo_tsunami_profile(
+    *,
+    count: int = 200,
+    run_id: str = "texas-gulf-flood",
+    seed: int = 42,
+    demo_window_s: float = 60.0,
+    impact_time: datetime | None = None,
+) -> list[SimEvent]:
+    """Compatibility wrapper for older imports; now returns the Texas profile."""
+    return generate_texas_flood_profile(
+        count=count,
+        run_id=run_id,
+        seed=seed,
+        demo_window_s=demo_window_s,
+        impact_time=impact_time,
+    )
+
+
 class DisasterSimulator:
     """
     Async runner: kicks off the simulation, drops incidents into the system
@@ -212,7 +230,7 @@ class DisasterSimulator:
         self,
         *,
         count: int = 200,
-        run_id: str = "hilo-1960",
+        run_id: str = "texas-gulf-flood",
         seed: int = 42,
         demo_window_s: float = 60.0,
     ) -> None:
@@ -223,7 +241,7 @@ class DisasterSimulator:
         self.events_emitted = 0
         self.events_dropped = 0
         self.run_id = run_id
-        events = generate_hilo_tsunami_profile(
+        events = generate_texas_flood_profile(
             count=count, run_id=run_id, seed=seed, demo_window_s=demo_window_s,
         )
         self._task = asyncio.create_task(self._run(events), name="disaster-sim")

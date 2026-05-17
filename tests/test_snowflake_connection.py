@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from disaster.snowflake.connection import _connect_params, env_configured
+from disaster.snowflake.connection import _SCHEMAS, _connect_params, _row_to_columns, env_configured
 
 # Required base
 _BASE = {"SNOWFLAKE_ACCOUNT": "xy12345", "SNOWFLAKE_USER": "demo"}
@@ -134,3 +134,25 @@ def test_connect_params_overrides_warehouse_db_schema(clean_env):
     assert params["warehouse"] == "CUSTOM_WH"
     assert params["database"] == "CUSTOM_DB"
     assert params["schema"] == "CUSTOM_SCHEMA"
+
+
+def test_responder_arrivals_schema_is_flushable():
+    row = {
+        "responder_id": "responder-1",
+        "callsign": "ALS-1",
+        "incident_id": "incident-1",
+        "cluster_id": None,
+        "arrival_timestamp": "2026-05-17T12:00:00Z",
+        "ping_lat": 19.701,
+        "ping_lng": -155.0,
+        "accuracy_m": 8,
+        "route_id": "route-1",
+        "assignment_id": "assignment-1",
+        "detection_method": "geofence_two_pings",
+        "distance_m": 12.5,
+    }
+
+    assert "responder_arrivals" in _SCHEMAS
+    assert _row_to_columns("responder_arrivals", row) == [
+        row[column] for column in _SCHEMAS["responder_arrivals"]
+    ]

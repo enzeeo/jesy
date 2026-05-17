@@ -29,6 +29,7 @@ from disaster.app.routes.demo import router as demo_router
 from disaster.app.routes.events import router as events_router
 from disaster.app.routes.incidents import router as incidents_router
 from disaster.app.routes.intake import router as intake_router
+from disaster.app.routes.responders import router as responders_router
 from disaster.app.routes.intake_tools import router as intake_tools_router
 from disaster.app.routes.routing import router as routing_router
 from disaster.app.routes.sim import router as sim_router
@@ -45,6 +46,7 @@ from disaster.snowflake import (
 # Load .env from project root if present. Safe to call multiple times; safe in tests.
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_PROJECT_ROOT / ".env", override=False)
+load_dotenv(_PROJECT_ROOT / "frontend" / ".env.local", override=False)
 
 log = logging.getLogger(__name__)
 
@@ -117,6 +119,7 @@ def create_app(
     app.include_router(incidents_router)
     app.include_router(triage_router)
     app.include_router(events_router)
+    app.include_router(responders_router)
     app.include_router(routing_router)
     app.include_router(intake_router)
     app.include_router(intake_tools_router)

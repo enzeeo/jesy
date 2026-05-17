@@ -21,15 +21,26 @@ export const api = {
       body: JSON.stringify({ severity, reason }),
     }),
   // Responders + routing
-  optimize: () => jsonFetch<{
-    solver: string; elapsed_ms: number; unassigned: string[];
-    routes: Record<string, Array<{
-      incident_id: string;
-      from_location: import("./types").Location;
-      to_location: import("./types").Location;
-      distance_km: number; eta_seconds: number;
-    }>>;
-  }>("/routing/optimize", { method: "POST" }),
+  optimize: () => jsonFetch<import("./types").RoutingResponse>("/routing/optimize", { method: "POST" }),
+  roadAccess: () => jsonFetch<import("./types").RoadAccessSummary>("/routing/road-access"),
+  blockedRoads: () => jsonFetch<import("./types").BlockedRoadsResponse>("/routing/blocked-roads"),
+  startDispatch: (payload: import("./types").StartDispatchRequest) =>
+    jsonFetch<import("./types").StartDispatchResponse>("/routing/dispatches/start", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  responderAssignment: (id: string) =>
+    jsonFetch<import("./types").ResponderAssignment | null>(`/responders/${id}/assignment`).catch(() => null),
+  completeResponderAssignment: (id: string, payload: import("./types").CompleteAssignmentRequest) =>
+    jsonFetch<import("./types").CompleteAssignmentResponse>(`/responders/${id}/assignment/complete`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateResponderLocation: (id: string, ping: import("./types").ResponderLocationPing) =>
+    jsonFetch<import("./types").ResponderLocationResponse>(`/responders/${id}/location`, {
+      method: "POST",
+      body: JSON.stringify(ping),
+    }),
   // Snowflake tiles
   tile: (name: string) => jsonFetch<{ tile: string; source: string; rows: any[] }>(`/snowflake/tile/${name}`),
   // Cortex

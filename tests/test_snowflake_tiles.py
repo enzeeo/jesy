@@ -21,10 +21,10 @@ from disaster.snowflake import TILE_QUERIES
 from disaster.snowflake.tiles import _synthetic_tile
 
 
-def _incident(sev: Severity, *, lat: float = 19.72, conf: float = 0.95, source: IncidentSource = IncidentSource.VOICE) -> IncidentReport:
+def _incident(sev: Severity, *, lat: float = 29.30, conf: float = 0.95, source: IncidentSource = IncidentSource.VOICE) -> IncidentReport:
     return IncidentReport(
         timestamp=datetime.now(UTC),
-        location=Location(lat=lat, lng=-155.0, description="x"),
+        location=Location(lat=lat, lng=-94.79, description="x"),
         victims=[Victim(mobility=Mobility.WALKING, breathing=Breathing.SPONTANEOUS,
                         perfusion=Perfusion.NORMAL)],
         severity=sev,
@@ -55,9 +55,9 @@ def test_incident_rate_aggregates_per_minute():
 
 def test_geographic_equity_sectors():
     incidents = [
-        _incident(Severity.IMMEDIATE, lat=19.74),   # NORTH
-        _incident(Severity.MINOR, lat=19.70),        # SOUTH
-        _incident(Severity.DELAYED, lat=19.72),      # CENTRAL
+        _incident(Severity.IMMEDIATE, lat=29.32),   # NORTH
+        _incident(Severity.MINOR, lat=29.28),        # SOUTH
+        _incident(Severity.DELAYED, lat=29.30),      # CENTRAL
     ]
     rows = _synthetic_tile("geographic_equity", incidents)
     sectors = {r["sector"] for r in rows}
