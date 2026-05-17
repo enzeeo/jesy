@@ -12,6 +12,10 @@ export interface AARScorecard {
   vulnerable_assigned_count: number;
   vulnerable_eta_p50_seconds: number | null;
   extraction_confidence_p50: number | null;
+  actual_eta_p50_seconds: number | null;
+  actual_eta_p90_seconds: number | null;
+  eta_actual_vs_estimated_p50_delta_seconds: number | null;
+  actuals_coverage_pct: number;
 }
 
 export interface PolicyResult {
@@ -25,6 +29,29 @@ export interface PolicyResult {
   vulnerable_assigned_count: number;
   vulnerable_eta_p50_seconds: number | null;
   error: string | null;
+  solver_mix: Record<string, number> | null;
+  elapsed_ms_p50: number | null;
+  elapsed_ms_p90: number | null;
+  degraded_leg_pct: number | null;
+  provider_status: string | null;
+  optimization_count: number | null;
+}
+
+export interface RoadAccessContext {
+  feature_count: number;
+  hard_avoid_count: number;
+  soft_penalty_count: number;
+  provider: string | null;
+  loaded_at: string | null;
+}
+
+export interface CortexAlertEvent {
+  alert_id: string;
+  alert_type: string;
+  severity: string;
+  message: string | null;
+  detected_at: string;
+  sector_id: string | null;
 }
 
 export interface CounterfactualPanel {
@@ -83,6 +110,8 @@ export interface AARResponse {
   timeline: TimelineSlice[];
   incidents_geo: IncidentGeoPoint[];
   data_source: "snowflake" | "in_memory";
+  road_access_context: RoadAccessContext | null;
+  cortex_alerts: CortexAlertEvent[];
 }
 
 export interface RunSummary {
@@ -117,6 +146,28 @@ export function formatVulnGap(s: number): string {
   if (Math.abs(s) < 1) return "±0s";
   const sign = s > 0 ? "+" : "";
   return `${sign}${formatSeconds(Math.abs(s)).replace(/^/, s > 0 ? "" : "-")}`;
+}
+
+// Signed delta with leading sign — "+12s slower" or "−4s faster" feels too
+// chatty for a tile, so this just emits "+12s" / "-4s". Caller adds context.
+export function formatSignedSeconds(s: number | null | undefined): string {
+  if (s == null) return "—";
+  if (Math.abs(s) < 1) return "±0s";
+  const sign = s > 0 ? "+" : "−";
+  return `${sign}${formatSeconds(Math.abs(s))}`;
+}
+
+export function formatMs(ms: number | null | undefined): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${ms.toFixed(0)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+export function formatSolverMix(mix: Record<string, number> | null | undefined): string {
+  if (!mix) return "—";
+  const entries = Object.entries(mix).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return "—";
+  return entries.map(([k, v]) => `${k}×${v}`).join(" · ");
 }
 
 // Pretty class names for the UI (avoid showing "medical_dependency")

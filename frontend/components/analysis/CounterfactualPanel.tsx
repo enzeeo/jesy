@@ -1,6 +1,6 @@
 "use client";
 import type { CounterfactualPanel as CP, PolicyResult } from "@/lib/aar";
-import { formatKm, formatSeconds } from "@/lib/aar";
+import { formatKm, formatMs, formatPercent, formatSeconds, formatSolverMix } from "@/lib/aar";
 
 interface Props { panel: CP }
 
@@ -55,6 +55,41 @@ function PolicyColumn({ p, highlight }: { p: PolicyResult; highlight: boolean })
           <div className="mono text-fg-primary">{formatKm(p.total_fleet_distance_km)}</div>
         </div>
       </div>
+      {p.is_actual && p.optimization_count != null && p.optimization_count > 0 && (
+        <div className="mt-1 pt-2 border-t border-border-strong flex flex-col gap-1 text-[10px] mono text-fg-muted">
+          <div>
+            <span className="text-fg-secondary">{p.optimization_count}</span> solver runs
+            {p.elapsed_ms_p50 != null && (
+              <>
+                <span className="px-1">·</span>
+                p50 <span className="text-fg-secondary">{formatMs(p.elapsed_ms_p50)}</span>
+              </>
+            )}
+            {p.elapsed_ms_p90 != null && (
+              <>
+                <span className="px-1">·</span>
+                p90 <span className="text-fg-secondary">{formatMs(p.elapsed_ms_p90)}</span>
+              </>
+            )}
+          </div>
+          <div>{formatSolverMix(p.solver_mix)}</div>
+          <div>
+            {p.degraded_leg_pct != null && (
+              <>
+                degraded <span className={`text-fg-secondary ${p.degraded_leg_pct > 0.2 ? "text-status-warn" : ""}`}>
+                  {formatPercent(p.degraded_leg_pct)}
+                </span>
+              </>
+            )}
+            {p.provider_status && (
+              <>
+                <span className="px-1">·</span>
+                {p.provider_status}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

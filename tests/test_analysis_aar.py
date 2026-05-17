@@ -114,7 +114,10 @@ async def test_concurrent_requests_single_flight():
     state = AppState()
     for i in range(20):
         await state.incidents.insert(_inc(sim_run_id="r-concurrent", lat=19.7 + 0.001 * i))
-    await state.responders.upsert(_responder("A"))
+    # VRP needs total capacity >= n_incidents (no disjunction penalties configured).
+    # With 5 responders × capacity 5 = 25, the 20-incident problem is feasible.
+    for cs in ("A", "B", "C", "D", "E"):
+        await state.responders.upsert(_responder(cs))
 
     results = await asyncio.gather(
         get_or_compute_aar("r-concurrent", state),

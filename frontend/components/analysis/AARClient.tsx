@@ -9,6 +9,7 @@ import { VulnerabilityPanel } from "./VulnerabilityPanel";
 import { NarrativePanel, LessonsPanel } from "./NarrativePanel";
 import { IncidentMap } from "./IncidentMap";
 import { TimelineScrubber } from "./TimelineScrubber";
+import { RoadAccessStrip } from "./RoadAccessStrip";
 
 interface Props { aar: AARResponse }
 
@@ -71,6 +72,8 @@ export function AARClient({ aar: initialAar }: Props) {
         )}
       </header>
 
+      <RoadAccessStrip context={aar.road_access_context} />
+
       <Scorecard scorecard={aar.scorecard} />
 
       {aar.counterfactual && <CounterfactualPanel panel={aar.counterfactual} />}
@@ -96,6 +99,8 @@ export function AARClient({ aar: initialAar }: Props) {
             timeline={aar.timeline}
             cursorTSeconds={cursorTSeconds}
             onCursorChange={setCursor}
+            cortexAlerts={aar.cortex_alerts}
+            startedAt={aar.started_at}
           />
         </div>
       </div>

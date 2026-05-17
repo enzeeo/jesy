@@ -168,6 +168,7 @@ async def optimize_routes(
             solver=assignment.solver,
             elapsed_ms=assignment.elapsed_ms,
             payload=response_payload,
+            sim_run_id=state.active_sim_run_id,
         )
 
     await state.events.publish({

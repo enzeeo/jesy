@@ -1,16 +1,24 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { TimelineSlice } from "@/lib/aar";
+import type { CortexAlertEvent, TimelineSlice } from "@/lib/aar";
 
 interface Props {
   timeline: TimelineSlice[];
   cursorTSeconds: number;
   onCursorChange: (t: number) => void;
+  cortexAlerts?: CortexAlertEvent[];
+  startedAt?: string | null;
 }
 
 // Scrubber decoupled from useSSE — operates on a frozen AAR snapshot. Drag
 // the cursor, watch the IncidentMap filter incidents whose offset ≤ cursor.
-export function TimelineScrubber({ timeline, cursorTSeconds, onCursorChange }: Props) {
+export function TimelineScrubber({
+  timeline,
+  cursorTSeconds,
+  onCursorChange,
+  cortexAlerts = [],
+  startedAt = null,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(false);
 
@@ -65,6 +73,22 @@ export function TimelineScrubber({ timeline, cursorTSeconds, onCursorChange }: P
   const assignedD = "M " + assignedPoints.map((p) => `${p.x} ${p.y}`).join(" L ");
   const cursorX = pad + (cursorTSeconds / Math.max(1, maxT)) * (W - 2 * pad);
 
+  // Convert each alert's absolute timestamp to t_seconds from run start. Drop
+  // any whose offset falls outside [0, maxT] (defensive — server should have
+  // filtered to the run window already).
+  const startEpoch = startedAt ? new Date(startedAt).getTime() : null;
+  const alertTicks = startEpoch == null ? [] : cortexAlerts
+    .map((a) => {
+      const offset = (new Date(a.detected_at).getTime() - startEpoch) / 1000;
+      return { alert: a, t: offset };
+    })
+    .filter(({ t }) => t >= 0 && t <= maxT)
+    .map(({ alert, t }) => ({
+      alert,
+      t,
+      x: pad + (t / Math.max(1, maxT)) * (W - 2 * pad),
+    }));
+
   const handlePointer = (clientX: number) => {
     const el = containerRef.current;
     if (!el) return;
@@ -100,6 +124,23 @@ export function TimelineScrubber({ timeline, cursorTSeconds, onCursorChange }: P
           <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full h-20 block">
             <path d={areaD} fill="#1E293B" />
             <path d={assignedD} fill="none" stroke="#22C55E" strokeWidth={1.5} />
+            {alertTicks.map(({ alert, t, x }) => {
+              const color = alert.severity?.toLowerCase().startsWith("high") || alert.severity?.toLowerCase() === "critical"
+                ? "#EF4444"
+                : "#F59E0B";
+              return (
+                <g
+                  key={alert.alert_id}
+                  className="cursor-pointer"
+                  onClick={(e) => { e.stopPropagation(); onCursorChange(Math.round(t)); }}
+                >
+                  <line x1={x} y1={pad} x2={x} y2={H - pad} stroke={color} strokeWidth={1} opacity={0.7} strokeDasharray="2 2" />
+                  <circle cx={x} cy={pad + 4} r={3} fill={color}>
+                    <title>{`${alert.alert_type} · ${alert.message ?? "(no message)"}`}</title>
+                  </circle>
+                </g>
+              );
+            })}
             <line x1={cursorX} y1={pad} x2={cursorX} y2={H - pad} stroke="#F1F5F9" strokeWidth={2} />
           </svg>
         </div>

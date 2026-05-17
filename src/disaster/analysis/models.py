@@ -14,13 +14,23 @@ class AARScorecard(BaseModel):
     incident_count: int
     assigned_count: int
     assigned_pct: float                                 # 0-1
-    p50_eta_seconds: float | None                       # among assigned only
+    p50_eta_seconds: float | None                       # estimated ETA among assigned
     p90_eta_seconds: float | None
     total_fleet_distance_km: float
     vulnerable_incident_count: int
     vulnerable_assigned_count: int
     vulnerable_eta_p50_seconds: float | None
     extraction_confidence_p50: float | None             # voice intake quality
+
+    # Real wheels-on-scene timings sourced from SERVING.RESPONDER_ARRIVALS.
+    # None when no arrival data exists (in-memory fallback, or sim ended with
+    # no responders that ever pinged "arrived").
+    actual_eta_p50_seconds: float | None = None
+    actual_eta_p90_seconds: float | None = None
+    # Signed delta: actual_p50 minus estimated_p50. Positive = slower than estimate.
+    # Suppressed when coverage is too low to be statistically meaningful.
+    eta_actual_vs_estimated_p50_delta_seconds: float | None = None
+    actuals_coverage_pct: float = 0.0                   # share of assigned with real arrival
 
 
 class PolicyResult(BaseModel):
@@ -37,6 +47,15 @@ class PolicyResult(BaseModel):
     vulnerable_assigned_count: int = 0
     vulnerable_eta_p50_seconds: float | None = None
     error: str | None = None                            # set on solver failure
+
+    # Real-run enrichments — populated only on the "actual" row from
+    # SERVING.ROUTE_RECOMMENDATIONS + ROUTE_LEGS aggregates.
+    solver_mix: dict[str, int] | None = None            # {"weighted_flow": 12, "greedy": 3}
+    elapsed_ms_p50: float | None = None
+    elapsed_ms_p90: float | None = None
+    degraded_leg_pct: float | None = None               # 0-1; denominator = legs w/ incident_id
+    provider_status: str | None = None                  # most common non-null provider
+    optimization_count: int | None = None               # distinct ROUTE_ID count
 
 
 class CounterfactualPanel(BaseModel):
@@ -101,6 +120,29 @@ class NarrativeResponse(BaseModel):
     source: str                                         # "openai" | "fallback"
 
 
+class RoadAccessContext(BaseModel):
+    """Snapshot of road-closure state in effect during the run."""
+    model_config = ConfigDict(extra="forbid")
+
+    feature_count: int
+    hard_avoid_count: int
+    soft_penalty_count: int
+    provider: str | None = None
+    loaded_at: datetime | None = None
+
+
+class CortexAlertEvent(BaseModel):
+    """One Cortex/cluster detection that fired during the run window."""
+    model_config = ConfigDict(extra="forbid")
+
+    alert_id: str
+    alert_type: str
+    severity: str
+    message: str | None = None
+    detected_at: datetime
+    sector_id: str | None = None
+
+
 class AARResponse(BaseModel):
     """Full AAR payload returned by GET /api/analysis/{sim_run_id}."""
     model_config = ConfigDict(extra="forbid")
@@ -116,3 +158,5 @@ class AARResponse(BaseModel):
     timeline: list[TimelineSlice]
     incidents_geo: list[IncidentGeoPoint]               # for the AAR map + scrubber filter
     data_source: str                                    # "snowflake" | "in_memory"
+    road_access_context: RoadAccessContext | None = None
+    cortex_alerts: list[CortexAlertEvent] = Field(default_factory=list)

@@ -4,10 +4,18 @@ import type { RunSummary } from "@/lib/aar";
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 async function fetchRuns(): Promise<RunSummary[]> {
-  const res = await fetch(`${BACKEND}/api/analysis/runs`, { cache: "no-store" });
-  if (!res.ok) return [];
-  const body = (await res.json()) as { runs: RunSummary[] };
-  return body.runs;
+  try {
+    const res = await fetch(`${BACKEND}/api/analysis/runs`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { runs: RunSummary[] };
+    return body.runs;
+  } catch {
+    // Backend hung or down — render the empty-state instead of a 500.
+    return [];
+  }
 }
 
 export default async function RunsIndex() {
