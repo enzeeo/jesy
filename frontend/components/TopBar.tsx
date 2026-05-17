@@ -49,6 +49,7 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction }:
       <div className="flex items-center gap-2">
         <TopBarButton label="Seed Responders" pending={pending} onClick={() => run("seed", api.seedResponders)} />
         <TopBarButton label="Start Sim" pending={pending} onClick={() => run("sim", () => api.simStart(200, 60))} />
+        <TopBarButton label="Stop Sim" pending={pending} onClick={() => run("stop", api.simStop)} />
         <TopBarButton label="Optimize" pending={pending} onClick={() => run("optimize", api.optimize)} />
         <TopBarButton label="Cortex Scan" pending={pending} onClick={() => run("cortex", api.cortexScan)} />
         <div className="mx-2 h-6 w-px bg-border-strong" />

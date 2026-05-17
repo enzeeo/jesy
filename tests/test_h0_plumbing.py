@@ -86,23 +86,43 @@ async def test_routing_optimize_writes_responder_dispatches_with_sim_run_id():
 async def test_sim_start_sets_active_sim_run_id():
     state = AppState()
     app = create_app(state=state)
+    # Use a long window so the sim is genuinely "in progress" when we assert.
+    # A tiny window + low count finishes synchronously and the auto-clear
+    # callback (registered on the sim task done-handler) would have already
+    # cleared active_sim_run_id by the time we look.
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        r = await c.post("/sim/start", json={"count": 1, "run_id": "sim-run-1", "demo_window_s": 0.5})
+        r = await c.post("/sim/start", json={"count": 200, "run_id": "sim-run-1", "demo_window_s": 60})
         assert r.status_code == 200
-    assert state.active_sim_run_id == "sim-run-1"
-    # Cleanup
-    await c.aclose() if hasattr(c, "aclose") else None
+        assert state.active_sim_run_id == "sim-run-1"
+        await c.post("/sim/stop")
+    assert state.active_sim_run_id is None
 
 
 async def test_sim_stop_clears_active_sim_run_id():
     state = AppState()
-    state.active_sim_run_id = "sim-run-1"
     app = create_app(state=state)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        await c.post("/sim/start", json={"count": 1, "run_id": "sim-run-1", "demo_window_s": 0.5})
+        await c.post("/sim/start", json={"count": 200, "run_id": "sim-run-1", "demo_window_s": 60})
+        assert state.active_sim_run_id == "sim-run-1"
         r = await c.post("/sim/stop")
         assert r.status_code == 200
     assert state.active_sim_run_id is None
+
+
+async def test_sim_natural_completion_auto_clears_active_sim_run_id():
+    """Regression: simulator finishing on its own (no /sim/stop call) must
+    clear active_sim_run_id, otherwise the AAR stays stuck in 'Run in progress'."""
+    import asyncio
+
+    state = AppState()
+    app = create_app(state=state)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        # Tiny window — finishes in well under a second.
+        r = await c.post("/sim/start", json={"count": 3, "run_id": "auto-clear", "demo_window_s": 0.2})
+        assert r.status_code == 200
+        # Yield long enough for the simulator to drain its event queue.
+        await asyncio.sleep(0.5)
+    assert state.active_sim_run_id is None, "auto-clear must fire when sim finishes naturally"
 
 
 async def test_sim_start_409_when_another_run_active():

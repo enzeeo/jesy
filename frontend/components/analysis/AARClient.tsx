@@ -1,6 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { AARResponse } from "@/lib/aar";
+import { api } from "@/lib/api";
 import { Scorecard } from "./Scorecard";
 import { CounterfactualPanel } from "./CounterfactualPanel";
 import { VulnerabilityPanel } from "./VulnerabilityPanel";
@@ -10,11 +12,37 @@ import { TimelineScrubber } from "./TimelineScrubber";
 
 interface Props { aar: AARResponse }
 
-export function AARClient({ aar }: Props) {
+export function AARClient({ aar: initialAar }: Props) {
+  const router = useRouter();
+  const [aar, setAar] = useState<AARResponse>(initialAar);
+
   // Cursor starts at the end (show full run by default). Scrubber lets user
   // drag back in time. Bounded by last timeline slice's t_seconds.
   const maxT = aar.timeline.length > 0 ? aar.timeline[aar.timeline.length - 1].t_seconds : 0;
   const [cursorTSeconds, setCursor] = useState<number>(maxT);
+
+  // Live runs: poll every 3s. When the run flips out of is_live, refresh the
+  // page so SSR re-fetches the full payload (counterfactual + narrative panels
+  // weren't part of the live response and need a fresh server render).
+  useEffect(() => {
+    if (!aar.is_live) return;
+    const id = setInterval(async () => {
+      try {
+        const next = await api.aar(aar.sim_run_id);
+        if (!next.is_live) {
+          router.refresh();
+        } else {
+          setAar(next);
+          // While still live, advance the cursor so newly-arrived incidents render.
+          const nextMaxT = next.timeline.length > 0 ? next.timeline[next.timeline.length - 1].t_seconds : 0;
+          setCursor(nextMaxT);
+        }
+      } catch {
+        // transient — keep polling
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [aar.is_live, aar.sim_run_id, router]);
 
   return (
     <div className="flex flex-col gap-4 p-4">

@@ -5,6 +5,7 @@ GET  /sim/status — running, counts
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -77,6 +78,29 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
     # Make this the active run so /incidents, /intake/voice, /demo/trigger-call
     # all stamp incident.sim_run_id with it. The AAR scopes by this id.
     state.active_sim_run_id = payload.run_id
+
+    # Auto-clear active_sim_run_id when the simulator finishes emitting. Without
+    # this hook, the AAR stays stuck in "Run in progress" forever because no UI
+    # action ever calls /sim/stop after a natural completion.
+    loop = asyncio.get_running_loop()
+    sim_task = sim._task  # set by sim.start() above; guaranteed non-None here
+    if sim_task is not None:
+        def _on_finish(_task: asyncio.Task[None]) -> None:
+            # Only clear if this is still the active run (user may have started
+            # another run by now — rare in demo, but the guard is cheap).
+            if state.active_sim_run_id == payload.run_id:
+                state.active_sim_run_id = None
+                # Best-effort SSE notification so the dashboard can refresh the AAR link.
+                loop.create_task(state.events.publish({
+                    "type": "sim_finished",
+                    "data": {
+                        "run_id": payload.run_id,
+                        "events_emitted": sim.events_emitted,
+                    },
+                    "sequence_id": state.events.next_sequence_id(),
+                }))
+        sim_task.add_done_callback(_on_finish)
+
     await state.events.publish({
         "type": "sim_started",
         "data": {"run_id": payload.run_id, "count": payload.count, "window_s": payload.demo_window_s},
