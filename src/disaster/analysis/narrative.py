@@ -84,8 +84,8 @@ def _build_prompt(aar: AARResponse) -> str:
         f"VULNERABLE VICTIMS: {sc.vulnerable_incident_count} incidents, "
         f"{sc.vulnerable_assigned_count} assigned, "
         f"p50 ETA {_format_seconds(sc.vulnerable_eta_p50_seconds)}\n"
-        f"VULNERABILITY BREAKDOWN:\n" + ("\n".join(vuln_lines) if vuln_lines else "  (none)") + "\n"
-        f"COUNTERFACTUAL POLICIES:\n" + ("\n".join(policy_lines) if policy_lines else "  (none — live run)") + "\n\n"
+        "VULNERABILITY BREAKDOWN:\n" + ("\n".join(vuln_lines) if vuln_lines else "  (none)") + "\n"
+        "COUNTERFACTUAL POLICIES:\n" + ("\n".join(policy_lines) if policy_lines else "  (none — live run)") + "\n\n"
         "Produce JSON of this exact shape:\n"
         "{\n"
         '  "narrative": "<2 paragraphs describing what happened and what stood out. '
