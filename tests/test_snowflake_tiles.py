@@ -125,7 +125,7 @@ async def test_tile_endpoint_returns_in_memory_when_no_snowflake():
         assert r.status_code == 200
         body = r.json()
         assert body["tile"] == "severity_distribution"
-        assert body["source"] == "in_memory"
+        assert body["source"] == "app_state"
         assert any(row["severity"] == "Immediate" and row["n"] == 1 for row in body["rows"])
 
 

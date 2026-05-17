@@ -114,6 +114,8 @@ def create_app(
         try:
             yield
         finally:
+            if state.dispatch_movement is not None:
+                await state.dispatch_movement.cancel_all()
             if state.live_ops_scheduler is not None:
                 await state.live_ops_scheduler.stop()
             if state.snowflake is not None:

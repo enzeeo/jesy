@@ -297,12 +297,18 @@ async def start_dispatch(
             "data": event_data,
             "sequence_id": state.events.next_sequence_id(),
         })
+        movement = getattr(state, "dispatch_movement", None)
+        if movement is not None:
+            await movement.start(dispatch)
         return event_data
 
     current_responder = await state.responders.get(dispatch.responder_id)
     current_incident = await state.incidents.get(dispatch.incident_id)
     if current_responder is None or current_incident is None:
         raise HTTPException(status_code=404, detail="active dispatch references missing state")
+    movement = getattr(state, "dispatch_movement", None)
+    if movement is not None:
+        await movement.start(dispatch)
     return _dispatch_response(dispatch, current_responder, current_incident)
 
 

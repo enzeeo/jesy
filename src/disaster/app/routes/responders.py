@@ -66,7 +66,7 @@ async def update_responder_location(
         responder_id=responder_id,
         location=location,
         timestamp=ping.timestamp,
-        "accuracy_m": ping.accuracy_m,
+        accuracy_m=ping.accuracy_m,
         speed_mps=ping.speed_mps,
         heading=ping.heading,
     )

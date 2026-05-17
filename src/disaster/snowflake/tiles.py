@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from disaster.models import IncidentReport, Severity
+from disaster.models import IncidentReport, IncidentStatus, Severity
 from disaster.snowflake.tables import SCHEMA_CLEAN, SCHEMA_FEATURES, SCHEMA_RAW, SCHEMA_SERVING
 
 log = logging.getLogger(__name__)
@@ -26,6 +26,12 @@ log = logging.getLogger(__name__)
 # ECONNRESET. With a tight timeout we drop the bad query, log a warning, and
 # fall back to the in-memory synthetic computation that already exists below.
 _TILE_QUERY_TIMEOUT_S = 4.0
+ACTIVE_INCIDENT_STATUSES = {
+    IncidentStatus.NEW,
+    IncidentStatus.DISPATCHED,
+    IncidentStatus.EN_ROUTE,
+    IncidentStatus.PARTIAL,
+}
 
 
 def _db() -> str:
@@ -162,6 +168,10 @@ async def run_tile(
     if tile_name not in TILE_QUERIES:
         return {"tile": tile_name, "error": "unknown_tile"}
 
+    if tile_name == "severity_distribution":
+        incidents = fallback_incidents or []
+        return {"tile": tile_name, "source": "app_state", "rows": _synthetic_tile(tile_name, incidents)}
+
     if runner is not None:
         try:
             sql = TILE_QUERIES[tile_name]
@@ -194,9 +204,9 @@ def _synthetic_tile(tile_name: str, incidents: list[IncidentReport]) -> list[dic
     """In-memory equivalents that match the SQL shape."""
     now = datetime.now(UTC)
     if tile_name == "severity_distribution":
-        recent = [i for i in incidents if (now - i.timestamp) < timedelta(minutes=10)]
+        active_incidents = [i for i in incidents if i.status in ACTIVE_INCIDENT_STATUSES]
         counts: dict[str, int] = defaultdict(int)
-        for i in recent:
+        for i in active_incidents:
             counts[i.severity.value] += 1
         return [{"severity": s.value, "n": counts.get(s.value, 0)} for s in Severity]
 

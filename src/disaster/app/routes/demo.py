@@ -80,10 +80,19 @@ async def seed_responders(request: Request) -> dict[str, Any]:
 async def reset_state(request: Request) -> dict[str, Any]:
     """Wipe incidents + responders. For rehearsals."""
     state = _state(request)
+    movement = getattr(state, "dispatch_movement", None)
+    if movement is not None:
+        await movement.cancel_all()
+
     # IncidentStore + ResponderStore are dict-backed; mutate directly.
     state.incidents._incidents.clear()
     state.incidents._sim_index.clear()
     state.responders._units.clear()
+    state.active_dispatches._dispatches_by_leg.clear()
+    state.active_dispatches._dispatches_by_responder.clear()
+    state.route_recommendations._recommendations.clear()
+    state.route_recommendations._latest_route_id = None
+    state.responder_tracking._states.clear()
     await state.road_access.set(demo_road_access())
     await state.events.publish({
         "type": "state_reset",

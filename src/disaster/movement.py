@@ -78,6 +78,7 @@ async def record_responder_location(
     assignment: dict[str, Any] | None = None,
     route_progress: float | None = None,
     remaining_route_geometry: dict[str, Any] | None = None,
+    emit_location_ping: bool = False,
 ) -> dict[str, Any]:
     """Update responder location, emit SSE, and run arrival detection."""
 
@@ -92,7 +93,7 @@ async def record_responder_location(
     if assignment is None and active_dispatch is not None:
         assignment = await serialize_active_dispatch(state, active_dispatch)
 
-    if state.snowflake is not None:
+    if emit_location_ping and state.snowflake is not None:
         from disaster.snowflake import ingest
         ingest.emit_location_ping(
             state.snowflake,
@@ -316,6 +317,7 @@ class DispatchMovementService:
                     assignment=assignment,
                     route_progress=progress,
                     remaining_route_geometry=remaining_route_geometry,
+                    emit_location_ping=True,
                 )
                 if result.get("arrival_detected"):
                     return
