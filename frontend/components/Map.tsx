@@ -15,6 +15,7 @@ interface Props {
   incidents: IncidentReport[];
   responders: ResponderUnit[];
   routingResponse: RoutingResponse | null;
+  acceptedRouteKeys: Set<string>;
   flashing: Set<string>;
   onSelect: (id: string) => void;
 }
@@ -49,7 +50,19 @@ function getRouteCoordinates(leg: RouteLeg): [number, number][] {
   ];
 }
 
-export function MapView({ incidents, responders, routingResponse, flashing, onSelect }: Props) {
+function routeFeatureKey(routeId: string | null | undefined, leg: RouteLeg): string | null {
+  if (!routeId || !leg.leg_id) return null;
+  return `${routeId}:${leg.leg_id}`;
+}
+
+export function MapView({
+  incidents,
+  responders,
+  routingResponse,
+  acceptedRouteKeys,
+  flashing,
+  onSelect,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
@@ -103,6 +116,7 @@ export function MapView({ incidents, responders, routingResponse, flashing, onSe
           "fill-color": [
             "match", ["get", "road_status"],
             "confirmed_closed", "#EF4444",
+            "likely_flooded", "#EF4444",
             "restricted", "#F97316",
             "limited", "#FACC15",
             "#64748B",
@@ -118,6 +132,7 @@ export function MapView({ incidents, responders, routingResponse, flashing, onSe
           "line-color": [
             "match", ["get", "road_status"],
             "confirmed_closed", "#FCA5A5",
+            "likely_flooded", "#FCA5A5",
             "restricted", "#FDBA74",
             "limited", "#FDE68A",
             "#CBD5E1",
@@ -142,6 +157,8 @@ export function MapView({ incidents, responders, routingResponse, flashing, onSe
         paint: {
           "line-color": [
             "case",
+            ["boolean", ["get", "accepted"], false], "#38BDF8",
+            ["boolean", ["get", "recommended"], false], "#A855F7",
             ["boolean", ["get", "degraded"], false], "#F97316",
             "#38BDF8",
           ],
@@ -312,28 +329,34 @@ export function MapView({ incidents, responders, routingResponse, flashing, onSe
   const routeLinesGeoJSON = useMemo(() => ({
     type: "FeatureCollection" as const,
     features: Object.entries(routingResponse?.routes ?? {}).flatMap(([responderId, legs]) =>
-      legs.map((leg, index) => ({
-        type: "Feature" as const,
-        geometry: {
-          type: "LineString" as const,
-          coordinates: getRouteCoordinates(leg),
-        },
-        properties: {
-          responder_id: responderId,
-          leg_index: index,
-          target_id: leg.target_id ?? leg.incident_id ?? null,
-          target_type: leg.target_type ?? (leg.incident_id ? "incident" : null),
-          incident_id: leg.incident_id ?? null,
-          distance_km: leg.distance_km,
-          eta_seconds: leg.eta_seconds,
-          arrival_seconds: leg.arrival_seconds ?? null,
-          degraded: leg.degraded ?? false,
-          provider_status: leg.provider_status ?? null,
-          assignment_reason: leg.assignment_reason ?? null,
-        },
-      }))
+      legs.map((leg, index) => {
+        const routeKey = routeFeatureKey(routingResponse?.route_id, leg);
+        return {
+          type: "Feature" as const,
+          geometry: {
+            type: "LineString" as const,
+            coordinates: getRouteCoordinates(leg),
+          },
+          properties: {
+            route_key: routeKey,
+            accepted: routeKey ? acceptedRouteKeys.has(routeKey) : false,
+            recommended: true,
+            responder_id: responderId,
+            leg_index: index,
+            target_id: leg.target_id ?? leg.incident_id ?? null,
+            target_type: leg.target_type ?? (leg.incident_id ? "incident" : null),
+            incident_id: leg.incident_id ?? null,
+            distance_km: leg.distance_km,
+            eta_seconds: leg.eta_seconds,
+            arrival_seconds: leg.arrival_seconds ?? null,
+            degraded: leg.degraded ?? false,
+            provider_status: leg.provider_status ?? null,
+            assignment_reason: leg.assignment_reason ?? null,
+          },
+        };
+      })
     ),
-  }), [routingResponse]);
+  }), [acceptedRouteKeys, routingResponse]);
 
   const roadAccessGeoJSON = useMemo(
     () => getRoadAccessFeatureCollection(routingResponse?.road_access),

@@ -8,6 +8,7 @@ import type {
   ResponderArrivedData,
   ResponderLocationUpdatedData,
   ResponderUnit,
+  RouteLeg,
   RoutingResponse,
   DispatchStartedData,
   SeverityUpgradedData,
@@ -23,6 +24,22 @@ import { TopBar } from "@/components/TopBar";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 interface Toast { id: number; data: CortexAlertData }
+interface AcceptedRoute {
+  routeId: string;
+  legId: string;
+  responderId: string;
+  leg: RouteLeg;
+}
+
+interface TrackingTimerState {
+  timer: ReturnType<typeof setInterval>;
+  pingIndex: number;
+  inFlight: boolean;
+}
+
+const TRACKING_INTERVAL_MS = 1500;
+const TRACKING_ROUTE_STEPS = 12;
+const TRACKING_FINAL_DWELL_PINGS = 2;
 
 function getRecommendedDispatch(
   incident: IncidentReport | null,
@@ -55,6 +72,57 @@ function getRecommendedDispatch(
   return candidates[0] ?? null;
 }
 
+function routeAssignmentKey(routeId: string | null | undefined, legId: string | null | undefined): string | null {
+  if (!routeId || !legId) return null;
+  return `${routeId}:${legId}`;
+}
+
+function getRouteCoordinates(leg: RouteLeg): [number, number][] {
+  if (leg.route_geometry?.coordinates?.length) return leg.route_geometry.coordinates;
+  return [
+    [leg.from_location.lng, leg.from_location.lat],
+    [leg.to_location.lng, leg.to_location.lat],
+  ];
+}
+
+function interpolateRoutePoint(coordinates: [number, number][], progress: number): [number, number] {
+  if (coordinates.length === 0) return [0, 0];
+  if (coordinates.length === 1) return coordinates[0];
+
+  const segmentLengths = coordinates.slice(1).map((coordinate, index) => {
+    const previous = coordinates[index];
+    return Math.hypot(coordinate[0] - previous[0], coordinate[1] - previous[1]);
+  });
+  const totalLength = segmentLengths.reduce((sum, length) => sum + length, 0);
+  if (totalLength <= 0) return coordinates[coordinates.length - 1];
+
+  let remainingDistance = Math.max(0, Math.min(1, progress)) * totalLength;
+  for (let index = 0; index < segmentLengths.length; index += 1) {
+    const segmentLength = segmentLengths[index];
+    if (remainingDistance > segmentLength) {
+      remainingDistance -= segmentLength;
+      continue;
+    }
+    const previous = coordinates[index];
+    const next = coordinates[index + 1];
+    const segmentProgress = segmentLength > 0 ? remainingDistance / segmentLength : 1;
+    return [
+      previous[0] + (next[0] - previous[0]) * segmentProgress,
+      previous[1] + (next[1] - previous[1]) * segmentProgress,
+    ];
+  }
+  return coordinates[coordinates.length - 1];
+}
+
+function findRouteLeg(
+  routingResponse: RoutingResponse | null,
+  responderId: string | null | undefined,
+  legId: string | null | undefined
+): RouteLeg | null {
+  if (!routingResponse || !responderId || !legId) return null;
+  return routingResponse.routes[responderId]?.find((leg) => leg.leg_id === legId) ?? null;
+}
+
 export default function Dashboard() {
   const [incidents, setIncidents] = useState<IncidentReport[]>([]);
   const [responders, setResponders] = useState<ResponderUnit[]>([]);
@@ -65,7 +133,9 @@ export default function Dashboard() {
   const [tileRefreshSignal, setTileRefreshSignal] = useState(0);
   const [dispatchingKey, setDispatchingKey] = useState<string | null>(null);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
+  const [acceptedRoutes, setAcceptedRoutes] = useState<Record<string, AcceptedRoute>>({});
   const lastLocalOptimizeAtRef = useRef(0);
+  const trackingTimersRef = useRef<Map<string, TrackingTimerState>>(new Map());
   const { flashing, register } = useSeverityFlash();
 
   const refresh = useCallback(async () => {
@@ -89,6 +159,86 @@ export default function Dashboard() {
     refresh();
     refreshRouting();
   }, [refresh, refreshRouting]);
+
+  useEffect(() => {
+    return () => {
+      for (const trackingState of trackingTimersRef.current.values()) {
+        clearInterval(trackingState.timer);
+      }
+      trackingTimersRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const visibleAcceptedKeys = new Set<string>();
+    if (routingResponse?.route_id) {
+      for (const legs of Object.values(routingResponse.routes)) {
+        for (const leg of legs) {
+          const routeKey = routeAssignmentKey(routingResponse.route_id, leg.leg_id);
+          if (routeKey && acceptedRoutes[routeKey]) visibleAcceptedKeys.add(routeKey);
+        }
+      }
+    }
+
+    const stopTracking = (routeKey: string) => {
+      const trackingState = trackingTimersRef.current.get(routeKey);
+      if (!trackingState) return;
+      clearInterval(trackingState.timer);
+      trackingTimersRef.current.delete(routeKey);
+    };
+
+    for (const routeKey of trackingTimersRef.current.keys()) {
+      const acceptedRoute = acceptedRoutes[routeKey];
+      const responder = acceptedRoute
+        ? responders.find((unit) => unit.id === acceptedRoute.responderId)
+        : null;
+      if (!acceptedRoute || !visibleAcceptedKeys.has(routeKey) || responder?.status === "on_scene") {
+        stopTracking(routeKey);
+      }
+    }
+
+    for (const [routeKey, acceptedRoute] of Object.entries(acceptedRoutes)) {
+      if (trackingTimersRef.current.has(routeKey)) continue;
+      if (!visibleAcceptedKeys.has(routeKey)) continue;
+      const responder = responders.find((unit) => unit.id === acceptedRoute.responderId);
+      if (!responder || responder.status === "on_scene") continue;
+
+      const coordinates = getRouteCoordinates(acceptedRoute.leg);
+      if (coordinates.length < 2) continue;
+
+      const trackingState: TrackingTimerState = {
+        pingIndex: 0,
+        inFlight: false,
+        timer: setInterval(async () => {
+          const currentTrackingState = trackingTimersRef.current.get(routeKey);
+          if (!currentTrackingState || currentTrackingState.inFlight) return;
+          currentTrackingState.inFlight = true;
+          currentTrackingState.pingIndex += 1;
+
+          const progress = Math.min(1, currentTrackingState.pingIndex / TRACKING_ROUTE_STEPS);
+          const [lng, lat] = interpolateRoutePoint(coordinates, progress);
+          try {
+            const response = await api.updateResponderLocation(acceptedRoute.responderId, {
+              lat,
+              lng,
+              accuracy_m: 12,
+              timestamp: new Date().toISOString(),
+            });
+            const finalPingLimit = TRACKING_ROUTE_STEPS + TRACKING_FINAL_DWELL_PINGS;
+            if (response.arrival_detected || currentTrackingState.pingIndex >= finalPingLimit) {
+              stopTracking(routeKey);
+            }
+          } catch (error) {
+            console.warn("demo tracking stopped:", error);
+            stopTracking(routeKey);
+          } finally {
+            currentTrackingState.inFlight = false;
+          }
+        }, TRACKING_INTERVAL_MS),
+      };
+      trackingTimersRef.current.set(routeKey, trackingState);
+    }
+  }, [acceptedRoutes, responders, routingResponse]);
 
   // SSE handler
   const { connected } = useSSE((evt) => {
@@ -115,6 +265,22 @@ export default function Dashboard() {
       refreshRouting();
     } else if (evt.type === "dispatch_started") {
       const data = evt.data as DispatchStartedData;
+      const responderId = data.responder_id ?? data.responder?.id;
+      const routeKey = routeAssignmentKey(data.route_id, data.leg_id);
+      const leg = data.assignment?.route_leg
+        ?? data.assignment?.leg
+        ?? findRouteLeg(routingResponse, responderId, data.leg_id);
+      if (routeKey && responderId && data.route_id && data.leg_id && leg) {
+        setAcceptedRoutes((prev) => ({
+          ...prev,
+          [routeKey]: {
+            routeId: data.route_id!,
+            legId: data.leg_id!,
+            responderId,
+            leg,
+          },
+        }));
+      }
       const responderUpdate = data.responder;
       if (responderUpdate) {
         setResponders((prev) => prev.map((responder) =>
@@ -125,6 +291,7 @@ export default function Dashboard() {
     } else if (evt.type === "state_reset") {
       setIncidents([]); setResponders([]); setSelectedId(null);
       setRoutingResponse(null);
+      setAcceptedRoutes({});
       setCallsHandled(0); setToasts([]);
     } else if (evt.type === "route_recomputed") {
       setTileRefreshSignal((n) => n + 1);
@@ -158,12 +325,14 @@ export default function Dashboard() {
       refresh();
       refreshRouting();
     }
-  }, [register, refresh, refreshRouting]);
+  }, [register, refresh, refreshRouting, routingResponse]);
 
   const selected = useMemo(
     () => (selectedId ? incidents.find((i) => i.id === selectedId) ?? null : null),
     [selectedId, incidents]
   );
+
+  const acceptedRouteKeys = useMemo(() => new Set(Object.keys(acceptedRoutes)), [acceptedRoutes]);
 
   const recommendedDispatch = useMemo(
     () => getRecommendedDispatch(selected, responders, routingResponse),
@@ -185,6 +354,15 @@ export default function Dashboard() {
         leg_id: dispatch.leg.leg_id,
         started_by: "dispatcher",
       });
+      setAcceptedRoutes((prev) => ({
+        ...prev,
+        [dispatchKey]: {
+          routeId: dispatch.routeId!,
+          legId: dispatch.leg.leg_id!,
+          responderId: dispatch.responderId,
+          leg: dispatch.leg,
+        },
+      }));
       if (response.responders) setResponders(response.responders);
       const responderUpdate = response.responder;
       if (responderUpdate) {
@@ -229,6 +407,7 @@ export default function Dashboard() {
               incidents={incidents}
               responders={responders}
               routingResponse={routingResponse}
+              acceptedRouteKeys={acceptedRouteKeys}
               flashing={flashing}
               onSelect={setSelectedId}
             />

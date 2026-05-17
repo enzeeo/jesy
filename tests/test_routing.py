@@ -249,6 +249,9 @@ async def test_optimize_endpoint_publishes_route_recomputed():
             body = r.json()
             assert body["solver"] in {"greedy", "vrp", "weighted_flow"}
             assert len(body["routes"]) == 1
+            assert body["road_access"]["feature_count"] == 2
+            assert body["road_access"]["hard_avoid_count"] == 2
+            assert body["road_access"]["feature_collection"]["type"] == "FeatureCollection"
 
         event = await asyncio.wait_for(consumer, timeout=1.0)
         await agen.aclose()

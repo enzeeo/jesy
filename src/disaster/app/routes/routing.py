@@ -31,6 +31,48 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/routing", tags=["routing"])
 
+DEMO_ROAD_ACCESS: dict[str, Any] = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "road_status": "confirmed_closed",
+                "label": "Harbor flood closure",
+                "confidence": 0.92,
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [-94.7899, 29.3097],
+                    [-94.7873, 29.3097],
+                    [-94.7873, 29.3123],
+                    [-94.7899, 29.3123],
+                    [-94.7899, 29.3097],
+                ]],
+            },
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "road_status": "confirmed_closed",
+                "label": "Seawall washout",
+                "confidence": 0.88,
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [-94.8057, 29.2796],
+                    [-94.8012, 29.2796],
+                    [-94.8012, 29.2824],
+                    [-94.8057, 29.2824],
+                    [-94.8057, 29.2796],
+                ]],
+            },
+        },
+    ],
+}
+
 
 class DispatchCluster(BaseModel):
     id: str = Field(min_length=1, max_length=120)
@@ -95,7 +137,7 @@ async def optimize_routes(
             assignment = optimize(incidents, responders, prefer_vrp=True)
         else:
             targets = [DispatchTarget.from_incident(incident) for incident in incidents]
-            assignment = optimize_weighted_flow(targets, responders)
+            assignment = optimize_weighted_flow(targets, responders, road_access=DEMO_ROAD_ACCESS)
     else:
         responders = payload.responders
         if responders is None:
