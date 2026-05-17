@@ -208,7 +208,13 @@ async def _compute_aar(
     counterfactual: CounterfactualPanel | None = None
     if not is_live:
         actual = _build_actual_policy_result(incidents, resolved_etas, route_runs)
-        policy_results = run_all_policies(incidents, responders)
+        # run_all_policies is sync CPU-bound (OR-Tools VRP under the hood).
+        # Run it off the event loop so /healthz and concurrent requests stay
+        # responsive even if a single solver call burns its 2s budget.
+        loop = asyncio.get_running_loop()
+        policy_results = await loop.run_in_executor(
+            None, run_all_policies, incidents, responders,
+        )
         counterfactual = CounterfactualPanel(
             actual=actual,
             policies=policy_results,

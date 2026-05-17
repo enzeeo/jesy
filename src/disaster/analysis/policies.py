@@ -120,8 +120,15 @@ def _greedy_solver(incidents: list[IncidentReport], responders: list[Any]) -> As
 
 
 def _vrp_deterministic_solver(incidents: list[IncidentReport], responders: list[Any]) -> Assignment:
-    """VRP in deterministic mode — no time budget, no GLS. Bit-stable across runs."""
-    return solve_vrp(incidents, responders, time_budget_s=None, vehicle_capacity=5)
+    """
+    VRP for counterfactual replay. Bounded to 2s of solver wall time so
+    infeasible inputs (total demand > total capacity, no disjunction
+    penalties configured) raise NoFeasibleSolution instead of looping
+    forever in OR-Tools C code and starving the asyncio loop. Bounding
+    activates Guided Local Search, so results are not bit-stable across
+    runs — acceptable trade for the AAR not hanging the whole worker.
+    """
+    return solve_vrp(incidents, responders, time_budget_s=2.0, vehicle_capacity=5)
 
 
 # ── Policy registry ──────────────────────────────────────────────────────────
