@@ -4,12 +4,15 @@ import { api } from "@/lib/api";
 import { useSSE } from "@/lib/useSSE";
 import { useSeverityFlash } from "@/lib/useSeverityFlash";
 import type {
+  ActiveResponderAssignment,
   IncidentReport,
   BlockedRoadsResponse,
   RoadAccessSummary,
   ResponderArrivedData,
+  ResponderAssignment,
   ResponderLocationUpdatedData,
   ResponderUnit,
+  RouteLineString,
   RouteLeg,
   RoutingResponse,
   DispatchCompletedData,
@@ -36,16 +39,6 @@ interface AcceptedRoute {
   originalLeg: RouteLeg;
   leg: RouteLeg;
 }
-
-interface TrackingTimerState {
-  timer: ReturnType<typeof setInterval>;
-  pingIndex: number;
-  inFlight: boolean;
-}
-
-const TRACKING_INTERVAL_MS = 1500;
-const TRACKING_ROUTE_STEPS = 12;
-const TRACKING_FINAL_DWELL_PINGS = 2;
 
 function getRecommendedDispatch(
   incident: IncidentReport | null,
@@ -100,91 +93,6 @@ function routeAssignmentKey(routeId: string | null | undefined, legId: string | 
   return `${routeId}:${legId}`;
 }
 
-function getRouteCoordinates(leg: RouteLeg): [number, number][] {
-  if (leg.route_geometry?.coordinates?.length) return leg.route_geometry.coordinates;
-  return [
-    [leg.from_location.lng, leg.from_location.lat],
-    [leg.to_location.lng, leg.to_location.lat],
-  ];
-}
-
-function interpolateRoutePoint(coordinates: [number, number][], progress: number): [number, number] {
-  if (coordinates.length === 0) return [0, 0];
-  if (coordinates.length === 1) return coordinates[0];
-
-  const segmentLengths = coordinates.slice(1).map((coordinate, index) => {
-    const previous = coordinates[index];
-    return Math.hypot(coordinate[0] - previous[0], coordinate[1] - previous[1]);
-  });
-  const totalLength = segmentLengths.reduce((sum, length) => sum + length, 0);
-  if (totalLength <= 0) return coordinates[coordinates.length - 1];
-
-  let remainingDistance = Math.max(0, Math.min(1, progress)) * totalLength;
-  for (let index = 0; index < segmentLengths.length; index += 1) {
-    const segmentLength = segmentLengths[index];
-    if (remainingDistance > segmentLength) {
-      remainingDistance -= segmentLength;
-      continue;
-    }
-    const previous = coordinates[index];
-    const next = coordinates[index + 1];
-    const segmentProgress = segmentLength > 0 ? remainingDistance / segmentLength : 1;
-    return [
-      previous[0] + (next[0] - previous[0]) * segmentProgress,
-      previous[1] + (next[1] - previous[1]) * segmentProgress,
-    ];
-  }
-  return coordinates[coordinates.length - 1];
-}
-
-function getRemainingRouteCoordinates(coordinates: [number, number][], progress: number): [number, number][] {
-  if (coordinates.length < 2) return coordinates;
-
-  const segmentLengths = coordinates.slice(1).map((coordinate, index) => {
-    const previous = coordinates[index];
-    return Math.hypot(coordinate[0] - previous[0], coordinate[1] - previous[1]);
-  });
-  const totalLength = segmentLengths.reduce((sum, length) => sum + length, 0);
-  if (totalLength <= 0) return coordinates;
-
-  const clampedProgress = Math.max(0, Math.min(1, progress));
-  if (clampedProgress <= 0) return coordinates;
-  if (clampedProgress >= 1) {
-    const finalCoordinate = coordinates[coordinates.length - 1];
-    return [finalCoordinate, finalCoordinate];
-  }
-
-  let traveledDistance = clampedProgress * totalLength;
-  for (let index = 0; index < segmentLengths.length; index += 1) {
-    const segmentLength = segmentLengths[index];
-    if (traveledDistance > segmentLength) {
-      traveledDistance -= segmentLength;
-      continue;
-    }
-    const previous = coordinates[index];
-    const next = coordinates[index + 1];
-    const segmentProgress = segmentLength > 0 ? traveledDistance / segmentLength : 1;
-    const current: [number, number] = [
-      previous[0] + (next[0] - previous[0]) * segmentProgress,
-      previous[1] + (next[1] - previous[1]) * segmentProgress,
-    ];
-    return [current, ...coordinates.slice(index + 1)];
-  }
-
-  const finalCoordinate = coordinates[coordinates.length - 1];
-  return [finalCoordinate, finalCoordinate];
-}
-
-function routeLegWithRemainingGeometry(leg: RouteLeg, progress: number): RouteLeg {
-  return {
-    ...leg,
-    route_geometry: {
-      type: "LineString",
-      coordinates: getRemainingRouteCoordinates(getRouteCoordinates(leg), progress),
-    },
-  };
-}
-
 function findRouteLeg(
   routingResponse: RoutingResponse | null,
   responderId: string | null | undefined,
@@ -194,18 +102,74 @@ function findRouteLeg(
   return routingResponse.routes[responderId]?.find((leg) => leg.leg_id === legId) ?? null;
 }
 
-function acceptedRouteIsActive(acceptedRoute: AcceptedRoute, responders: ResponderUnit[]): boolean {
-  const responder = responders.find((unit) => unit.id === acceptedRoute.responderId);
-  if (
-    !responder
-    || responder.status === "idle"
-    || responder.status === "on_scene"
-    || responder.status === "out_of_service"
-  ) {
-    return false;
+function routeLegWithRemainingGeometry(
+  leg: RouteLeg,
+  remainingRouteGeometry: RouteLineString | null | undefined
+): RouteLeg {
+  if (!remainingRouteGeometry) return leg;
+  return { ...leg, route_geometry: remainingRouteGeometry };
+}
+
+function getAssignmentLeg(assignment: ResponderAssignment): RouteLeg | null {
+  return assignment.route_leg ?? assignment.leg ?? null;
+}
+
+function acceptedRouteFromAssignment(
+  assignment: ResponderAssignment,
+  previousAcceptedRoute?: AcceptedRoute,
+  remainingRouteGeometry?: RouteLineString | null,
+  fallbackResponderId?: string
+): AcceptedRoute | null {
+  const routeId = assignment.route_id ?? previousAcceptedRoute?.routeId;
+  const legId = assignment.leg_id ?? previousAcceptedRoute?.legId;
+  const responderId = assignment.responder_id ?? previousAcceptedRoute?.responderId ?? fallbackResponderId;
+  const assignmentLeg = getAssignmentLeg(assignment);
+  const baseLeg = assignmentLeg ?? previousAcceptedRoute?.leg ?? previousAcceptedRoute?.originalLeg ?? null;
+  if (!routeId || !legId || !responderId || !baseLeg) return null;
+
+  const leg = routeLegWithRemainingGeometry(
+    baseLeg,
+    remainingRouteGeometry ?? assignment.remaining_route_geometry
+  );
+
+  return {
+    routeId,
+    legId,
+    responderId,
+    originalLeg: previousAcceptedRoute?.originalLeg ?? assignmentLeg ?? leg,
+    leg,
+  };
+}
+
+function acceptedRoutesFromAssignments(
+  assignments: ActiveResponderAssignment[]
+): Record<string, AcceptedRoute> {
+  const next: Record<string, AcceptedRoute> = {};
+  for (const assignment of assignments) {
+    const acceptedRoute = acceptedRouteFromAssignment(assignment);
+    if (!acceptedRoute) continue;
+    const routeKey = routeAssignmentKey(acceptedRoute.routeId, acceptedRoute.legId);
+    if (routeKey) next[routeKey] = acceptedRoute;
   }
-  const incidentId = getLegIncidentId(acceptedRoute.originalLeg);
-  return Boolean(incidentId && responder.assigned_incident_id === incidentId);
+  return next;
+}
+
+function getResponderFromLocationEvent(data: ResponderLocationUpdatedData): ResponderUnit | null {
+  if (data && typeof data === "object" && "responder" in data) return data.responder ?? null;
+  if (data && typeof data === "object" && "id" in data) return data as ResponderUnit;
+  return null;
+}
+
+function getAssignmentFromLocationEvent(data: ResponderLocationUpdatedData): ResponderAssignment | null {
+  if (data && typeof data === "object" && "assignment" in data) return data.assignment ?? null;
+  return null;
+}
+
+function getRemainingGeometryFromLocationEvent(data: ResponderLocationUpdatedData): RouteLineString | null {
+  if (data && typeof data === "object" && "remaining_route_geometry" in data) {
+    return data.remaining_route_geometry ?? null;
+  }
+  return null;
 }
 
 export default function Dashboard() {
@@ -222,16 +186,17 @@ export default function Dashboard() {
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [acceptedRoutes, setAcceptedRoutes] = useState<Record<string, AcceptedRoute>>({});
   const lastLocalOptimizeAtRef = useRef(0);
-  const trackingTimersRef = useRef<Map<string, TrackingTimerState>>(new Map());
   const { flashing, register } = useSeverityFlash();
 
   const refresh = useCallback(async () => {
-    const [inc, resp] = await Promise.all([
+    const [inc, resp, activeAssignments] = await Promise.all([
       api.listIncidents().catch(() => []),
       api.responders().catch(() => []),
+      api.activeResponderAssignments(),
     ]);
     setIncidents(inc);
     setResponders(resp);
+    setAcceptedRoutes(acceptedRoutesFromAssignments(activeAssignments));
     setTileRefreshSignal((n) => n + 1);
   }, []);
 
@@ -252,117 +217,6 @@ export default function Dashboard() {
     refreshRouting();
     refreshRoadAccess();
   }, [refresh, refreshRouting, refreshRoadAccess]);
-
-  useEffect(() => {
-    const trackingTimers = trackingTimersRef.current;
-    return () => {
-      for (const trackingState of trackingTimers.values()) {
-        clearInterval(trackingState.timer);
-      }
-      trackingTimers.clear();
-    };
-  }, []);
-
-  useEffect(() => {
-    const stopTracking = (routeKey: string) => {
-      const trackingState = trackingTimersRef.current.get(routeKey);
-      if (!trackingState) return;
-      clearInterval(trackingState.timer);
-      trackingTimersRef.current.delete(routeKey);
-    };
-
-    const removeAcceptedRoute = (routeKey: string) => {
-      setAcceptedRoutes((previous) => {
-        if (!previous[routeKey]) return previous;
-        const next = { ...previous };
-        delete next[routeKey];
-        return next;
-      });
-    };
-
-    for (const routeKey of trackingTimersRef.current.keys()) {
-      const acceptedRoute = acceptedRoutes[routeKey];
-      const responder = acceptedRoute
-        ? responders.find((unit) => unit.id === acceptedRoute.responderId)
-        : null;
-      if (!acceptedRoute || !acceptedRouteIsActive(acceptedRoute, responders) || responder?.status === "on_scene") {
-        stopTracking(routeKey);
-      }
-    }
-
-    for (const [routeKey, acceptedRoute] of Object.entries(acceptedRoutes)) {
-      if (trackingTimersRef.current.has(routeKey)) continue;
-      if (!acceptedRouteIsActive(acceptedRoute, responders)) continue;
-      const responder = responders.find((unit) => unit.id === acceptedRoute.responderId);
-      if (!responder || responder.status === "on_scene") continue;
-
-      const coordinates = getRouteCoordinates(acceptedRoute.originalLeg);
-      if (coordinates.length < 2) continue;
-
-      const trackingState: TrackingTimerState = {
-        pingIndex: 0,
-        inFlight: false,
-        timer: setInterval(async () => {
-          const currentTrackingState = trackingTimersRef.current.get(routeKey);
-          if (!currentTrackingState || currentTrackingState.inFlight) return;
-          currentTrackingState.inFlight = true;
-          currentTrackingState.pingIndex += 1;
-
-          const progress = Math.min(1, currentTrackingState.pingIndex / TRACKING_ROUTE_STEPS);
-          const [lng, lat] = progress >= 1
-            ? [acceptedRoute.originalLeg.to_location.lng, acceptedRoute.originalLeg.to_location.lat]
-            : interpolateRoutePoint(coordinates, progress);
-          try {
-            const response = await api.updateResponderLocation(acceptedRoute.responderId, {
-              lat,
-              lng,
-              accuracy_m: 12,
-              timestamp: new Date().toISOString(),
-            });
-            setAcceptedRoutes((previous) => {
-              const currentAcceptedRoute = previous[routeKey];
-              if (!currentAcceptedRoute) return previous;
-              return {
-                ...previous,
-                [routeKey]: {
-                  ...currentAcceptedRoute,
-                  leg: routeLegWithRemainingGeometry(currentAcceptedRoute.originalLeg, progress),
-                },
-              };
-            });
-            const finalPingLimit = TRACKING_ROUTE_STEPS + TRACKING_FINAL_DWELL_PINGS;
-            if (response.arrival_detected || currentTrackingState.pingIndex >= finalPingLimit) {
-              if (response.arrival_detected) {
-                const arrivalLocation = {
-                  ...acceptedRoute.originalLeg.to_location,
-                  lat,
-                  lng,
-                };
-                setResponders((previous) => previous.map((responder) =>
-                  responder.id === acceptedRoute.responderId
-                    ? { ...responder, status: "on_scene", location: arrivalLocation }
-                    : responder
-                ));
-                if (response.incident_id) {
-                  setIncidents((previous) => previous.map((incident) =>
-                    incident.id === response.incident_id ? { ...incident, status: "on_scene" } : incident
-                  ));
-                }
-              }
-              stopTracking(routeKey);
-              removeAcceptedRoute(routeKey);
-            }
-          } catch (error) {
-            console.warn("demo tracking stopped:", error);
-            stopTracking(routeKey);
-          } finally {
-            currentTrackingState.inFlight = false;
-          }
-        }, TRACKING_INTERVAL_MS),
-      };
-      trackingTimersRef.current.set(routeKey, trackingState);
-    }
-  }, [acceptedRoutes, responders, routingResponse]);
 
   // SSE handler
   const { connected } = useSSE((evt) => {
@@ -438,7 +292,7 @@ export default function Dashboard() {
       refreshRoadAccess();
     } else if (evt.type === "responder_location_updated") {
       const data = evt.data as ResponderLocationUpdatedData;
-      const responder = "responder" in data ? data.responder : data;
+      const responder = getResponderFromLocationEvent(data);
       if (responder) {
         setResponders((prev) => {
           const exists = prev.some((existingResponder) => existingResponder.id === responder.id);
@@ -450,6 +304,39 @@ export default function Dashboard() {
                 : responder
               : existingResponder
           );
+        });
+      }
+      const assignment = getAssignmentFromLocationEvent(data);
+      const remainingRouteGeometry = getRemainingGeometryFromLocationEvent(data);
+      if (assignment) {
+        setAcceptedRoutes((prev) => {
+          const routeKey = routeAssignmentKey(assignment.route_id, assignment.leg_id);
+          if (!routeKey) return prev;
+          const acceptedRoute = acceptedRouteFromAssignment(
+            assignment,
+            prev[routeKey],
+            remainingRouteGeometry,
+            responder?.id
+          );
+          if (!acceptedRoute) return prev;
+          return { ...prev, [routeKey]: acceptedRoute };
+        });
+      } else if (responder && remainingRouteGeometry) {
+        setAcceptedRoutes((prev) => {
+          let changed = false;
+          const next: Record<string, AcceptedRoute> = {};
+          for (const [routeKey, acceptedRoute] of Object.entries(prev)) {
+            if (acceptedRoute.responderId !== responder.id) {
+              next[routeKey] = acceptedRoute;
+              continue;
+            }
+            changed = true;
+            next[routeKey] = {
+              ...acceptedRoute,
+              leg: routeLegWithRemainingGeometry(acceptedRoute.leg, remainingRouteGeometry),
+            };
+          }
+          return changed ? next : prev;
         });
       }
     } else if (evt.type === "responder_arrived") {

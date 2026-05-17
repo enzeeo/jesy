@@ -215,10 +215,41 @@ export interface ResponderAssignment {
   distance_km?: number | null;
   route_leg?: RouteLeg | null;
   leg?: RouteLeg | null;
+  responder?: ResponderUnit | null;
   incident?: IncidentReport | null;
+  route_progress?: number | null;
+  remaining_route_geometry?: RouteLineString | null;
 }
 
-export type ResponderLocationUpdatedData = ResponderUnit | { responder: ResponderUnit };
+export interface ActiveResponderAssignment extends ResponderAssignment {
+  responder_id: string;
+  route_id: string;
+  leg_id: string;
+  assignment_id: string;
+  incident_id: string;
+  status: string;
+  route_leg: RouteLeg;
+  leg: RouteLeg;
+  responder: ResponderUnit;
+  incident: IncidentReport;
+}
+
+export type ResponderLocationUpdatedData =
+  | ResponderUnit
+  | {
+      responder_id?: string;
+      responder: ResponderUnit;
+      callsign?: string;
+      status?: ResponderStatus;
+      location?: Location;
+      accuracy_m?: number;
+      timestamp?: string;
+      speed_mps?: number | null;
+      heading?: number | null;
+      assignment?: ResponderAssignment | null;
+      route_progress?: number | null;
+      remaining_route_geometry?: RouteLineString | null;
+    };
 
 export interface DispatchStartedData {
   dispatch_id?: string;
