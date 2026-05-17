@@ -257,6 +257,7 @@ export interface DispatchStartedData {
   leg_id?: string;
   responder_id?: string;
   incident_id?: string;
+  route_leg?: RouteLeg;
   responder?: ResponderUnit;
   assignment?: ResponderAssignment;
 }

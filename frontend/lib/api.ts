@@ -32,7 +32,7 @@ export const api = {
   responderAssignment: (id: string) =>
     jsonFetch<import("./types").ResponderAssignment | null>(`/responders/${id}/assignment`).catch(() => null),
   activeResponderAssignments: () =>
-    jsonFetch<import("./types").ActiveResponderAssignment[]>("/responders/assignments").catch(() => []),
+    jsonFetch<import("./types").ActiveResponderAssignment[]>("/responders/assignments"),
   completeResponderAssignment: (id: string, payload: import("./types").CompleteAssignmentRequest) =>
     jsonFetch<import("./types").CompleteAssignmentResponse>(`/responders/${id}/assignment/complete`, {
       method: "POST",

@@ -142,14 +142,19 @@ function acceptedRouteFromAssignment(
 }
 
 function acceptedRoutesFromAssignments(
-  assignments: ActiveResponderAssignment[]
+  assignments: ActiveResponderAssignment[],
+  previousAcceptedRoutes: Record<string, AcceptedRoute> = {}
 ): Record<string, AcceptedRoute> {
   const next: Record<string, AcceptedRoute> = {};
   for (const assignment of assignments) {
-    const acceptedRoute = acceptedRouteFromAssignment(assignment);
+    const routeKey = routeAssignmentKey(assignment.route_id, assignment.leg_id);
+    const acceptedRoute = acceptedRouteFromAssignment(
+      assignment,
+      routeKey ? previousAcceptedRoutes[routeKey] : undefined
+    );
     if (!acceptedRoute) continue;
-    const routeKey = routeAssignmentKey(acceptedRoute.routeId, acceptedRoute.legId);
-    if (routeKey) next[routeKey] = acceptedRoute;
+    const acceptedRouteKey = routeAssignmentKey(acceptedRoute.routeId, acceptedRoute.legId);
+    if (acceptedRouteKey) next[acceptedRouteKey] = acceptedRoute;
   }
   return next;
 }
@@ -189,14 +194,18 @@ export default function Dashboard() {
   const { flashing, register } = useSeverityFlash();
 
   const refresh = useCallback(async () => {
-    const [inc, resp, activeAssignments] = await Promise.all([
+    const [inc, resp, activeAssignmentsResult] = await Promise.all([
       api.listIncidents().catch(() => []),
       api.responders().catch(() => []),
-      api.activeResponderAssignments(),
+      api.activeResponderAssignments()
+        .then((assignments) => ({ ok: true as const, assignments }))
+        .catch(() => ({ ok: false as const, assignments: [] as ActiveResponderAssignment[] })),
     ]);
     setIncidents(inc);
     setResponders(resp);
-    setAcceptedRoutes(acceptedRoutesFromAssignments(activeAssignments));
+    if (activeAssignmentsResult.ok) {
+      setAcceptedRoutes((prev) => acceptedRoutesFromAssignments(activeAssignmentsResult.assignments, prev));
+    }
     setTileRefreshSignal((n) => n + 1);
   }, []);
 
@@ -253,6 +262,7 @@ export default function Dashboard() {
       const routeKey = routeAssignmentKey(data.route_id, data.leg_id);
       const leg = data.assignment?.route_leg
         ?? data.assignment?.leg
+        ?? data.route_leg
         ?? findRouteLeg(routingResponse, responderId, data.leg_id);
       if (routeKey && responderId && data.route_id && data.leg_id && leg) {
         setAcceptedRoutes((prev) => ({

@@ -8,6 +8,7 @@ import pytest
 from disaster.snowflake.connection import (
     _SCHEMAS,
     _connect_params,
+    _insert_sql,
     _insert_placeholders,
     _row_to_columns,
     env_configured,
@@ -152,6 +153,16 @@ def test_insert_placeholders_parse_json_for_variant_columns():
     route_cols = TABLE_COLUMNS[f"{SCHEMA_SERVING}.ROUTE_RECOMMENDATIONS"]
     route_ph = _insert_placeholders(route_cols)
     assert route_ph.count("PARSE_JSON(%s)") == 7
+
+
+def test_insert_sql_uses_select_for_variant_expressions():
+    columns = TABLE_COLUMNS[f"{SCHEMA_SERVING}.ROUTING_INPUTS"]
+    sql = _insert_sql("SERVING.ROUTING_INPUTS", columns)
+
+    assert " VALUES " not in sql
+    assert sql.startswith("INSERT INTO SERVING.ROUTING_INPUTS")
+    assert " SELECT " in sql
+    assert "PARSE_JSON(%s)" in sql
 
 
 def test_serving_responder_arrivals_schema_is_flushable():
