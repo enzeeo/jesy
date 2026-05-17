@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -142,7 +143,7 @@ def optimize_weighted_flow(
             current_arrival_seconds[responder.id],
             road_summary,
             assignment_reason="accepted_leg_frozen",
-            allow_live_provider=True,
+            allow_live_provider=False,
         )
         routes[responder.id].append(leg)
         current_locations[responder.id] = target.location
@@ -190,7 +191,7 @@ def optimize_weighted_flow(
             current_arrival_seconds[responder.id],
             road_summary,
             assignment_reason="weighted_flow_min_cost",
-            allow_live_provider=True,
+            allow_live_provider=False,
         )
         routes[responder.id].append(leg)
         current_locations[responder.id] = target.location
@@ -198,12 +199,50 @@ def optimize_weighted_flow(
         remaining_stops[responder.id] -= 1
         available_targets.pop(target.id, None)
 
+    _enrich_legs_with_live_routing(routes, road_summary)
+
     return WeightedAssignment(
         routes=routes,
         unassigned=sorted(available_targets),
         elapsed_ms=(time.monotonic() - started_at) * 1000.0,
         road_access=road_summary,
     )
+
+
+def _enrich_legs_with_live_routing(
+    routes: Mapping[UUID, list[WeightedRouteLeg]],
+    road_summary: Mapping[str, Any],
+) -> None:
+    """Replace stub haversine geometry with real provider routes, in parallel.
+
+    The assignment algorithm runs on stub haversine for speed (60 sequential
+    Mapbox calls would take ~60s). After the algorithm decides the legs, fetch
+    real road-following geometries concurrently and patch the leg in place.
+    Goes through `_estimate_route` so the existing Mapbox → ORS → stub
+    fallback chain (and the test monkeypatches that target it) is preserved.
+    """
+
+    all_legs = [leg for legs in routes.values() for leg in legs]
+    if not all_legs:
+        return
+
+    def fetch(leg: WeightedRouteLeg) -> tuple[WeightedRouteLeg, RouteEstimate]:
+        return leg, _estimate_route(
+            leg.from_location,
+            leg.to_location,
+            road_summary,
+            allow_live_provider=True,
+        )
+
+    with ThreadPoolExecutor(max_workers=min(32, len(all_legs))) as executor:
+        for leg, estimate in executor.map(fetch, all_legs):
+            if estimate.provider_status == "stub_haversine":
+                continue
+            leg.distance_km = estimate.distance_km
+            leg.eta_seconds = estimate.eta_seconds
+            leg.route_geometry = estimate.route_geometry
+            leg.provider_status = estimate.provider_status
+            leg.degraded = estimate.degraded
 
 
 def summarize_road_access(road_access: Mapping[str, Any] | None) -> dict[str, Any]:
