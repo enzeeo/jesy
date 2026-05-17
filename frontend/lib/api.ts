@@ -48,4 +48,8 @@ export const api = {
     jsonFetch(`/demo/trigger-call?scenario=${scenario}`, { method: "POST" }),
   scenarios: () => jsonFetch<{ scenarios: Array<{ key: string; location_hint: string; preview: string }> }>(`/demo/scenarios`),
   responders: () => jsonFetch<import("./types").ResponderUnit[]>("/responders").catch(() => []),
+  // AAR
+  aar: (simRunId: string) => jsonFetch<import("./aar").AARResponse>(`/api/analysis/${encodeURIComponent(simRunId)}`),
+  aarNarrative: (simRunId: string) => jsonFetch<import("./aar").NarrativeResponse>(`/api/analysis/${encodeURIComponent(simRunId)}/narrative`),
+  aarRuns: () => jsonFetch<{ runs: import("./aar").RunSummary[] }>("/api/analysis/runs"),
 };

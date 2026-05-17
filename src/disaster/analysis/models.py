@@ -70,6 +70,19 @@ class TimelineSlice(BaseModel):
     incidents_assigned: int                             # cumulative count
 
 
+class IncidentGeoPoint(BaseModel):
+    """Slim projection used to render incidents on the AAR map (scrubber filter)."""
+    model_config = ConfigDict(extra="forbid")
+
+    id: str                                             # UUID str
+    lat: float
+    lng: float
+    timestamp: datetime
+    severity: str
+    eta_seconds: float | None                           # None if unassigned
+    has_vulnerable: bool
+
+
 class LessonItem(BaseModel):
     """One recommendation produced by the LLM (or empty list on fallback)."""
     model_config = ConfigDict(extra="forbid")
@@ -101,4 +114,5 @@ class AARResponse(BaseModel):
     counterfactual: CounterfactualPanel | None          # None when is_live=true
     vulnerability: list[VulnerabilityBreakdown]
     timeline: list[TimelineSlice]
+    incidents_geo: list[IncidentGeoPoint]               # for the AAR map + scrubber filter
     data_source: str                                    # "snowflake" | "in_memory"

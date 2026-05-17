@@ -61,6 +61,12 @@ export function TopBar({ connected, incidentsCount, respondersCount, onAction }:
           />
         ))}
         <div className="mx-2 h-6 w-px bg-border-strong" />
+        <a
+          href="/analysis"
+          className="mono border border-border-strong bg-bg-elev px-2.5 py-1 text-xs text-fg-primary hover:bg-bg-base"
+        >
+          AAR
+        </a>
         <TopBarButton label="Reset" pending={pending} onClick={() => run("reset", api.reset)} />
       </div>
     </div>

@@ -35,6 +35,7 @@ from disaster.analysis.models import (
     AARResponse,
     AARScorecard,
     CounterfactualPanel,
+    IncidentGeoPoint,
     PolicyResult,
     TimelineSlice,
 )
@@ -120,6 +121,7 @@ async def _compute_aar(
     scorecard = _build_scorecard(incidents, dispatches_eta)
     vulnerability = compute_breakdown(incidents, dispatches_eta)
     timeline = _build_timeline(incidents, dispatches_eta)
+    incidents_geo = _build_geo(incidents, dispatches_eta)
 
     counterfactual: CounterfactualPanel | None = None
     if not is_live:
@@ -149,6 +151,7 @@ async def _compute_aar(
         counterfactual=counterfactual,
         vulnerability=vulnerability,
         timeline=timeline,
+        incidents_geo=incidents_geo,
         data_source=data_source,
     )
 
@@ -311,6 +314,26 @@ def _build_timeline(
             incidents_assigned=cum_assigned,
         ))
     return timeline
+
+
+def _build_geo(
+    incidents: list[IncidentReport],
+    dispatches_eta: dict[UUID, float],
+) -> list[IncidentGeoPoint]:
+    """Slim per-incident projection for the AAR map + scrubber. Sorted by timestamp."""
+    sorted_inc = sorted(incidents, key=lambda i: i.timestamp)
+    return [
+        IncidentGeoPoint(
+            id=str(i.id),
+            lat=i.location.lat,
+            lng=i.location.lng,
+            timestamp=i.timestamp,
+            severity=i.severity.value,
+            eta_seconds=dispatches_eta.get(i.id),
+            has_vulnerable=has_vulnerable_victim(i),
+        )
+        for i in sorted_inc
+    ]
 
 
 def _percentile(values: list[float], q: float) -> float:
