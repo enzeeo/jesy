@@ -391,7 +391,6 @@ export default function Dashboard() {
       setToasts((prev) => [...prev, { id: evt.sequence_id ?? Date.now(), data }]);
     } else if (evt.type === "responders_seeded" || evt.type === "sim_started") {
       refresh();
-      refreshRouting();
     } else if (evt.type === "dispatch_started") {
       const data = evt.data as DispatchStartedData;
       const responderId = data.responder_id ?? data.responder?.id;
