@@ -28,15 +28,18 @@ GLOBAL_PROTOCOL: Final[str] = (
 
 # ── Segment 2: disaster context for current deployment ────────────────────────
 # This block is loaded from the active DisasterProfile at startup.
-# For demo: Texas Gulf Coast flood surge parameters.
+# For demo: Hurricane Helene inland-flood response in Asheville / Buncombe County.
 DISASTER_CONTEXT: Final[str] = (
-    "ACTIVE DISASTER: Hurricane flood surge, Galveston Texas, coastal radius 8 km.\n"
-    "Expected injuries: drowning, blunt trauma, lacerations, hypothermia, crush "
-    "injuries from debris. Vulnerable populations: coastal residents, tourists at "
-    "Seawall Boulevard hotels, dock workers at Pier 21, patients near the UTMB "
-    "Health campus. Communication may be intermittent. Power may be out in west "
-    "island sector. Roads flooded: Seawall Boulevard low points, Harborside Drive, "
-    "Broadway Avenue J near 25th Street.\n"
+    "ACTIVE DISASTER: Hurricane Helene inland flooding, Asheville and Buncombe "
+    "County, North Carolina, operations centered near 35.5951, -82.5515.\n"
+    "Expected injuries: drowning, respiratory distress, blunt trauma, lacerations, "
+    "hypothermia, crush injuries from trees and debris, and medication or oxygen "
+    "interruptions. Vulnerable populations: residents near the French Broad River, "
+    "River Arts District, Biltmore Village, Swannanoa River corridor, Hominy Creek, "
+    "older adults, children, mobility-dependent callers, and medically dependent "
+    "patients without power. Communications may be intermittent. Roads may be "
+    "blocked or limited near River Arts District, Biltmore Village, Swannanoa River "
+    "Road, Hominy Creek crossings, I-40 east, and flooded low-water underpasses.\n"
 )
 
 # ── Pinned SHA256 of the prefix ───────────────────────────────────────────────
@@ -44,7 +47,7 @@ DISASTER_CONTEXT: Final[str] = (
 #   python -c "from disaster.llm.prompt import prefix_bytes; \
 #              import hashlib; print(hashlib.sha256(prefix_bytes()).hexdigest())"
 PREFIX_SHA256: Final[str] = (
-    "2433438ff24af6036a07d9b234213114a625af6c1623d2f92509da90321697d0"
+    "75907c44f08ad0c39d789619dce2979cc081bd5f43938cc5ef9317937dc2776d"
 )
 
 

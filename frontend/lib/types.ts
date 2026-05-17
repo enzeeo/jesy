@@ -81,6 +81,13 @@ export interface RoadAccessFeature {
 
 export interface RoadAccessFeatureCollection {
   type: "FeatureCollection";
+  metadata?: {
+    road_access_id?: string;
+    source?: string;
+    version?: string;
+    loaded_at?: string;
+    source_urls?: string[];
+  };
   features: RoadAccessFeature[];
 }
 
@@ -89,6 +96,11 @@ export interface RoadAccessSummary {
   hard_avoid_count?: number;
   soft_penalty_count?: number;
   status_counts?: Record<string, number>;
+  road_access_id?: string;
+  source?: string;
+  version?: string;
+  loaded_at?: string;
+  source_urls?: string[];
   provider?: string;
   avoidance_strategy?: string;
   features?: RoadAccessFeature[];

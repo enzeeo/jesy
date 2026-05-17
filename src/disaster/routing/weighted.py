@@ -232,6 +232,11 @@ def summarize_road_access(road_access: Mapping[str, Any] | None) -> dict[str, An
         "avoidance_strategy": "mapbox_roads_with_visual_closures_else_ors_avoid_polygons_else_stub_warning",
     }
     if road_access and road_access.get("type") == "FeatureCollection":
+        metadata = road_access.get("metadata")
+        if isinstance(metadata, Mapping):
+            for key in ("road_access_id", "source", "version", "loaded_at", "source_urls"):
+                if key in metadata:
+                    summary[key] = metadata[key]
         summary["feature_collection"] = road_access
     return summary
 

@@ -55,9 +55,9 @@ def test_incident_rate_aggregates_per_minute():
 
 def test_geographic_equity_sectors():
     incidents = [
-        _incident(Severity.IMMEDIATE, lat=29.32),   # NORTH
-        _incident(Severity.MINOR, lat=29.28),        # SOUTH
-        _incident(Severity.DELAYED, lat=29.30),      # CENTRAL
+        _incident(Severity.IMMEDIATE, lat=35.62),   # NORTH
+        _incident(Severity.MINOR, lat=35.56),        # SOUTH
+        _incident(Severity.DELAYED, lat=35.59),      # CENTRAL
     ]
     rows = _synthetic_tile("geographic_equity", incidents)
     sectors = {r["sector"] for r in rows}

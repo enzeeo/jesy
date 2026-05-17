@@ -22,7 +22,7 @@ from disaster.models import (
 
 def _minimal_incident(**overrides) -> IncidentReport:
     base = dict(
-        location=Location(lat=19.7297, lng=-155.0900, description="Hilo Bay Front"),
+        location=Location(lat=35.5951, lng=-82.5515, description="Downtown Asheville"),
         victims=[Victim(age_estimate=34, injuries=["laceration"])],
     )
     base.update(overrides)
@@ -34,7 +34,7 @@ def _minimal_incident(**overrides) -> IncidentReport:
 def test_rejects_extra_fields_on_root():
     with pytest.raises(ValidationError) as exc:
         IncidentReport.model_validate({
-            "location": {"lat": 19.7, "lng": -155.0, "description": "test"},
+            "location": {"lat": 35.5951, "lng": -82.5515, "description": "test"},
             "victims": [{"injuries": []}],
             "rogue_field": "should fail",
         })
@@ -44,7 +44,7 @@ def test_rejects_extra_fields_on_root():
 def test_rejects_extra_fields_on_nested():
     with pytest.raises(ValidationError):
         IncidentReport.model_validate({
-            "location": {"lat": 19.7, "lng": -155.0, "description": "test", "extra": 1},
+            "location": {"lat": 35.5951, "lng": -82.5515, "description": "test", "extra": 1},
             "victims": [{"injuries": []}],
         })
 

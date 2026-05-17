@@ -50,7 +50,7 @@ def test_prefix_bytes_decode_round_trip():
     None,
     {},
     {"victim_count": 1},
-    {"victim_count": 3, "location": "Pier 21"},
+    {"victim_count": 3, "location": "Biltmore Village"},
     {"breathing": "irregular", "perfusion": "poor", "respiratory_rate": 32},
     {"caller_name": "Anonymous", "callback_available": True},
 ])
@@ -67,7 +67,7 @@ def test_prefix_byte_identical_across_call_states(call_state):
 def test_two_different_call_states_have_identical_prefix():
     """Direct comparison: prefix bytes are the same regardless of tail."""
     a = assemble_prompt({"victim_count": 1}).encode("utf-8")[:PREFIX_LEN]
-    b = assemble_prompt({"location": "Seawall Boulevard", "victim_count": 5}).encode("utf-8")[:PREFIX_LEN]
+    b = assemble_prompt({"location": "River Arts District", "victim_count": 5}).encode("utf-8")[:PREFIX_LEN]
     c = assemble_prompt(None).encode("utf-8")[:PREFIX_LEN]
     assert a == b == c
 
