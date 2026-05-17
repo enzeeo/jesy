@@ -37,8 +37,8 @@ WITH recent AS (
     SELECT
         i.INCIDENT_ID,
         CASE
-            WHEN i.LAT > 29.31 THEN 'NORTH'
-            WHEN i.LAT < 29.29 THEN 'SOUTH'
+            WHEN i.LAT > 35.61 THEN 'NORTH'
+            WHEN i.LAT < 35.57 THEN 'SOUTH'
             ELSE 'CENTRAL'
         END AS SECTOR,
         CASE
@@ -107,9 +107,9 @@ def detect_clusters(
         return []
 
     def _sector(i: IncidentReport) -> str:
-        if i.location.lat > 29.31:
+        if i.location.lat > 35.61:
             return "NORTH"
-        if i.location.lat < 29.29:
+        if i.location.lat < 35.57:
             return "SOUTH"
         return "CENTRAL"
 

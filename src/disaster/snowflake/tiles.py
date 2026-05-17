@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from disaster.models import IncidentReport, Severity
-from disaster.snowflake.tables import SCHEMA_CLEAN, SCHEMA_FEATURES, SCHEMA_SERVING
+from disaster.snowflake.tables import SCHEMA_CLEAN, SCHEMA_FEATURES, SCHEMA_RAW, SCHEMA_SERVING
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ def _t(schema: str, table: str) -> str:
 
 def _tile_queries() -> dict[str, str]:
     incidents = _t(SCHEMA_CLEAN, "INCIDENTS")
+    raw_submissions = _t(SCHEMA_RAW, "RAW_INCIDENT_SUBMISSIONS")
     victims = _t(SCHEMA_CLEAN, "VICTIMS")
     dispatches = _t(SCHEMA_SERVING, "RESPONDER_DISPATCHES")
     minute_counts = _t(SCHEMA_FEATURES, "INCIDENT_MINUTE_COUNTS")
@@ -77,8 +78,8 @@ def _tile_queries() -> dict[str, str]:
         "geographic_equity": f"""
             SELECT
                 CASE
-                    WHEN i.LAT > 29.31 THEN 'NORTH'
-                    WHEN i.LAT < 29.29 THEN 'SOUTH'
+                    WHEN i.LAT > 35.61 THEN 'NORTH'
+                    WHEN i.LAT < 35.57 THEN 'SOUTH'
                     ELSE 'CENTRAL'
                 END AS SECTOR,
                 AVG(d.ETA_SECONDS) AS AVG_ETA
@@ -90,14 +91,14 @@ def _tile_queries() -> dict[str, str]:
         "extraction_confidence": f"""
             SELECT
                 CASE
-                    WHEN CONFIDENCE >= 0.9 THEN 'high'
-                    WHEN CONFIDENCE >= 0.7 THEN 'medium'
+                    WHEN COALESCE(PAYLOAD:confidence::FLOAT, 0) >= 0.9 THEN 'high'
+                    WHEN COALESCE(PAYLOAD:confidence::FLOAT, 0) >= 0.7 THEN 'medium'
                     ELSE 'low'
                 END AS BUCKET,
                 COUNT(*) AS N
-            FROM {incidents}
+            FROM {raw_submissions}
             WHERE SOURCE = 'voice'
-                AND TIMESTAMP > DATEADD(minute, -10, CURRENT_TIMESTAMP())
+                AND RECEIVED_AT > DATEADD(minute, -10, CURRENT_TIMESTAMP())
             GROUP BY BUCKET
         """,
         "victims_for_cortex": f"""
@@ -229,7 +230,7 @@ def _synthetic_tile(tile_name: str, incidents: list[IncidentReport]) -> list[dic
     if tile_name == "geographic_equity":
         by_sector: dict[str, list[float]] = defaultdict(list)
         for i in incidents:
-            sector = "NORTH" if i.location.lat > 29.31 else ("SOUTH" if i.location.lat < 29.29 else "CENTRAL")
+            sector = "NORTH" if i.location.lat > 35.61 else ("SOUTH" if i.location.lat < 35.57 else "CENTRAL")
             by_sector[sector].append(600.0 * (1.0 - i.priority_score))
         return [{"sector": s, "avg_eta": statistics.mean(v) if v else 0.0} for s, v in by_sector.items()]
 

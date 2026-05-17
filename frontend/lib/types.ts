@@ -81,6 +81,13 @@ export interface RoadAccessFeature {
 
 export interface RoadAccessFeatureCollection {
   type: "FeatureCollection";
+  metadata?: {
+    road_access_id?: string;
+    source?: string;
+    version?: string;
+    loaded_at?: string;
+    source_urls?: string[];
+  };
   features: RoadAccessFeature[];
 }
 
@@ -89,6 +96,11 @@ export interface RoadAccessSummary {
   hard_avoid_count?: number;
   soft_penalty_count?: number;
   status_counts?: Record<string, number>;
+  road_access_id?: string;
+  source?: string;
+  version?: string;
+  loaded_at?: string;
+  source_urls?: string[];
   provider?: string;
   avoidance_strategy?: string;
   features?: RoadAccessFeature[];
@@ -237,7 +249,49 @@ export interface SeverityUpgradedData {
   incident_id: string;
   from: Severity;
   to: Severity;
+  from_priority?: number;
+  to_priority?: number;
   reason: string;
+}
+
+export interface CortexReassessResponse {
+  incident: IncidentReport;
+  source: "snowflake" | "heuristic";
+  reason: string;
+  changed: boolean;
+  previous: { severity: Severity; priority_score: number };
+}
+
+export interface ChatSourceRef {
+  query_id: string;
+  tables: string[];
+  row_count: number;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant" | string;
+  content: string;
+  sources: ChatSourceRef[];
+  warehouse_backed: boolean;
+  created_at: string;
+}
+
+export interface ChatSession {
+  session_id: string;
+  scope: "global" | "incident" | "sector" | "cluster";
+  scope_ref_id: string | null;
+  title: string;
+  created_at: string;
+  messages: ChatMessage[];
+}
+
+export interface ChatPostMessageResponse {
+  reply: {
+    content: string;
+    sources: ChatSourceRef[];
+    warehouse_backed: boolean;
+  };
+  session: ChatSession;
 }
 
 export interface CortexAlertData {

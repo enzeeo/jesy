@@ -7,8 +7,8 @@ DisasterSimulator — generates synthetic incidents on a compressed temporal cur
   Replay     : feed them to /incidents at the demo cadence
   Idempotent : same (sim_run_id, external_id) is rejected by IncidentStore
 
-Profile: Texas Gulf Coast flood surge parameters.
-  - Coastal weighting: most incidents near the Galveston waterfront
+Profile: Asheville / Buncombe County Helene inland-flood parameters.
+  - Land-only anchors: incidents are sampled from approved Asheville caller points
   - Severity distribution: 12% Immediate, 35% Delayed, 50% Minor, 3% Deceased
   - Temporal: front-loaded (impact + 2 hours = 70% of incidents)
   - Vulnerabilities: 8% child, 18% elderly, 4% mobility-dep
@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -34,13 +35,50 @@ from disaster.models import (
     Severity,
     Victim,
 )
+from disaster.road_access import demo_road_access
 
 log = logging.getLogger(__name__)
 
-# Galveston, Texas center (Gulf Coast flood surge impact zone)
-_TEXAS_CENTER = (29.3013, -94.7977)
-_COASTAL_LAT = 29.3013
-_COASTAL_LNG_RANGE = (-94.830, -94.760)
+# Asheville, North Carolina center (Helene inland-flood impact zone)
+ASHEVILLE_CENTER = (35.5951, -82.5515)
+ASHEVILLE_CALLER_ANCHORS = (
+    (35.5951, -82.5515, "Downtown Asheville"),
+    (35.5762, -82.5493, "Mission Hospital"),
+    (35.6179, -82.5669, "UNC Asheville"),
+    (35.5790, -82.5930, "West Asheville Library"),
+    (35.6118, -82.5442, "Charlotte Street"),
+    (35.5745, -82.5290, "Kenilworth"),
+    (35.6087, -82.5092, "Haw Creek"),
+    (35.5640, -82.6330, "Enka-Candler"),
+    (35.5484, -82.4810, "Oteen"),
+    (35.6472, -82.5607, "Woodfin"),
+    (35.5350, -82.6040, "Skyland"),
+    (35.6043, -82.5902, "Montford"),
+    (35.6049, -82.5299, "Grove Park"),
+    (35.5909, -82.5024, "Beverly Hills"),
+    (35.6357, -82.5826, "Weaverville Road"),
+)
+ASHEVILLE_CALLER_SPREAD_RADIUS_KM = 0.65
+_KM_PER_LATITUDE_DEGREE = 110.574
+_KM_PER_LONGITUDE_DEGREE_AT_EQUATOR = 111.320
+_GOLDEN_ANGLE_DEGREES = 137.507764
+_MAX_LOCATION_ATTEMPTS = 96
+
+
+def _load_default_exclusion_polygons() -> tuple[tuple[tuple[float, float], ...], ...]:
+    polygons: list[tuple[tuple[float, float], ...]] = []
+    for feature in demo_road_access()["features"]:
+        geometry = feature.get("geometry", {})
+        if geometry.get("type") != "Polygon":
+            continue
+        coordinates = geometry.get("coordinates", [])
+        if not coordinates:
+            continue
+        polygons.append(tuple((float(lng), float(lat)) for lng, lat in coordinates[0]))
+    return tuple(polygons)
+
+
+_DEFAULT_EXCLUSION_POLYGONS = _load_default_exclusion_polygons()
 
 _SEVERITY_DIST = [
     (Severity.IMMEDIATE, 0.12),
@@ -55,15 +93,6 @@ _INJURIES_BY_SEVERITY: dict[Severity, list[str]] = {
     Severity.MINOR: ["abrasion", "contusion", "mild laceration", "shock"],
     Severity.DECEASED: ["multiple trauma"],
 }
-
-_LANDMARKS = [
-    "Pier 21", "Galveston Harbor", "The Strand", "Seawall Boulevard",
-    "Harborside Drive", "25th Street", "Broadway Avenue J",
-    "UTMB Health campus", "East End", "West End",
-    "Moody Gardens", "Stewart Beach", "Galveston Island Historic Pleasure Pier",
-    "Rosenberg Library area", "Texas City Dike",
-]
-
 
 def _sample_severity(rng: random.Random) -> Severity:
     roll = rng.random()
@@ -98,16 +127,74 @@ def _sample_vulnerabilities(rng: random.Random, age: int) -> list[str]:
     return vulns
 
 
-def _sample_location(rng: random.Random) -> Location:
-    """Coastal-weighted spatial distribution."""
-    lat_jitter = rng.gauss(0.0, 0.002)
-    lng = rng.uniform(*_COASTAL_LNG_RANGE)
-    landmark = rng.choice(_LANDMARKS)
-    return Location(
-        lat=_COASTAL_LAT + lat_jitter,
-        lng=lng,
-        description=f"{landmark} area",
+def _sample_location(
+    rng: random.Random,
+    *,
+    sequence_index: int,
+    used_points: set[tuple[float, float]],
+) -> Location:
+    """Sample a unique land-safe point near approved Asheville caller anchors."""
+
+    anchor_start = rng.randrange(len(ASHEVILLE_CALLER_ANCHORS))
+    for attempt in range(_MAX_LOCATION_ATTEMPTS):
+        anchor_index = (anchor_start + attempt) % len(ASHEVILLE_CALLER_ANCHORS)
+        anchor_lat, anchor_lng, landmark = ASHEVILLE_CALLER_ANCHORS[anchor_index]
+        lat, lng = _spread_from_anchor(
+            anchor_lat=anchor_lat,
+            anchor_lng=anchor_lng,
+            sequence_index=sequence_index,
+            attempt=attempt,
+        )
+        point = (lat, lng)
+        if point in used_points or _is_excluded_point(lng, lat):
+            continue
+        used_points.add(point)
+        return Location(
+            lat=lat,
+            lng=lng,
+            description=f"{landmark} area",
+        )
+
+    raise RuntimeError("unable to sample a unique Asheville land-safe caller location")
+
+
+def _spread_from_anchor(
+    *,
+    anchor_lat: float,
+    anchor_lng: float,
+    sequence_index: int,
+    attempt: int,
+) -> tuple[float, float]:
+    ring = (sequence_index + attempt) % 9
+    radius_km = 0.14 + (ring * 0.055)
+    radius_km = min(radius_km, ASHEVILLE_CALLER_SPREAD_RADIUS_KM)
+    bearing = math.radians((sequence_index * _GOLDEN_ANGLE_DEGREES + attempt * 31.0) % 360)
+    latitude_offset = (radius_km * math.cos(bearing)) / _KM_PER_LATITUDE_DEGREE
+    longitude_scale = _KM_PER_LONGITUDE_DEGREE_AT_EQUATOR * math.cos(math.radians(anchor_lat))
+    longitude_offset = (radius_km * math.sin(bearing)) / longitude_scale
+    return (
+        round(anchor_lat + latitude_offset, 6),
+        round(anchor_lng + longitude_offset, 6),
     )
+
+
+def _is_excluded_point(lng: float, lat: float) -> bool:
+    return any(
+        _point_in_polygon(lng, lat, polygon)
+        for polygon in _DEFAULT_EXCLUSION_POLYGONS
+    )
+
+
+def _point_in_polygon(x: float, y: float, polygon: tuple[tuple[float, float], ...]) -> bool:
+    inside = False
+    j = len(polygon) - 1
+    for i, vertex in enumerate(polygon):
+        xi, yi = vertex
+        xj, yj = polygon[j]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
 
 
 def _build_victim(rng: random.Random, severity: Severity) -> Victim:
@@ -152,7 +239,7 @@ class SimEvent:
 def generate_texas_flood_profile(
     *,
     count: int = 200,
-    run_id: str = "texas-gulf-flood",
+    run_id: str = "asheville-helene-flood",
     seed: int = 42,
     demo_window_s: float = 60.0,
     impact_time: datetime | None = None,
@@ -166,6 +253,7 @@ def generate_texas_flood_profile(
         impact_time = datetime.now(UTC)
 
     events: list[SimEvent] = []
+    used_points: set[tuple[float, float]] = set()
     for i in range(count):
         sev = _sample_severity(rng)
         delay_s = _emit_delay_seconds(i, count, demo_window_s)
@@ -175,7 +263,7 @@ def generate_texas_flood_profile(
         incident = IncidentReport(
             timestamp=ts,
             source=IncidentSource.SIMULATED,
-            location=_sample_location(rng),
+            location=_sample_location(rng, sequence_index=i, used_points=used_points),
             victims=[_build_victim(rng, sev)],
             severity=sev,
             confidence=1.0,
@@ -190,15 +278,34 @@ def generate_texas_flood_profile(
     return events
 
 
-def generate_hilo_tsunami_profile(
+def generate_asheville_helene_profile(
     *,
     count: int = 200,
-    run_id: str = "texas-gulf-flood",
+    run_id: str = "asheville-helene-flood",
     seed: int = 42,
     demo_window_s: float = 60.0,
     impact_time: datetime | None = None,
 ) -> list[SimEvent]:
-    """Compatibility wrapper for older imports; now returns the Texas profile."""
+    """Named Asheville profile; wrapper preserves the existing generator contract."""
+
+    return generate_texas_flood_profile(
+        count=count,
+        run_id=run_id,
+        seed=seed,
+        demo_window_s=demo_window_s,
+        impact_time=impact_time,
+    )
+
+
+def generate_hilo_tsunami_profile(
+    *,
+    count: int = 200,
+    run_id: str = "asheville-helene-flood",
+    seed: int = 42,
+    demo_window_s: float = 60.0,
+    impact_time: datetime | None = None,
+) -> list[SimEvent]:
+    """Compatibility wrapper for older imports; now returns the Asheville profile."""
     return generate_texas_flood_profile(
         count=count,
         run_id=run_id,
@@ -232,7 +339,7 @@ class DisasterSimulator:
         self,
         *,
         count: int = 200,
-        run_id: str = "texas-gulf-flood",
+        run_id: str = "asheville-helene-flood",
         seed: int = 42,
         demo_window_s: float = 60.0,
     ) -> None:

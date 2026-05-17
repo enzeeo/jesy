@@ -22,6 +22,7 @@ import { IncidentList } from "@/components/IncidentList";
 import { IncidentDetail, type RecommendedDispatch } from "@/components/IncidentDetail";
 import { InfraPanel } from "@/components/InfraPanel";
 import { SnowflakeTiles } from "@/components/SnowflakeTiles";
+import { CortexChat } from "@/components/CortexChat";
 import { CortexToasts } from "@/components/CortexToast";
 import { TopBar } from "@/components/TopBar";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -214,6 +215,7 @@ export default function Dashboard() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [callsHandled, setCallsHandled] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [chatOpen, setChatOpen] = useState(true);
   const [tileRefreshSignal, setTileRefreshSignal] = useState(0);
   const [dispatchingKey, setDispatchingKey] = useState<string | null>(null);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
@@ -375,7 +377,13 @@ export default function Dashboard() {
       const data = evt.data as SeverityUpgradedData;
       register(evt.sequence_id, data.incident_id);
       setIncidents((prev) => prev.map((i) =>
-        i.id === data.incident_id ? { ...i, severity: data.to } : i
+        i.id === data.incident_id
+          ? {
+              ...i,
+              severity: data.to,
+              ...(data.to_priority != null ? { priority_score: data.to_priority } : {}),
+            }
+          : i
       ));
       setTileRefreshSignal((n) => n + 1);
     } else if (evt.type === "cortex_alert") {
@@ -500,6 +508,13 @@ export default function Dashboard() {
     [selectedId, incidents]
   );
 
+  const chatSector = useMemo(() => {
+    if (!selected) return null;
+    if (selected.location.lat > 29.31) return "NORTH";
+    if (selected.location.lat < 29.29) return "SOUTH";
+    return "CENTRAL";
+  }, [selected]);
+
   const acceptedRouteKeys = useMemo(() => {
     const routeKeys = new Set(Object.keys(acceptedRoutes));
     if (!routingResponse?.route_id) return routeKeys;
@@ -608,6 +623,14 @@ export default function Dashboard() {
           <ErrorBoundary label="Cortex alerts">
             <CortexToasts toasts={toasts} onDismiss={dismissToast} />
           </ErrorBoundary>
+          <ErrorBoundary label="Cortex chat">
+            <CortexChat
+              incidentId={selectedId}
+              sector={chatSector}
+              collapsed={!chatOpen}
+              onToggle={() => setChatOpen((o) => !o)}
+            />
+          </ErrorBoundary>
           {selected && (
             <ErrorBoundary label="Incident detail">
               <IncidentDetail
@@ -620,6 +643,9 @@ export default function Dashboard() {
                 }
                 dispatchError={dispatchError}
                 onStartDispatch={startDispatch}
+                onIncidentUpdated={(updated) => {
+                  setIncidents((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+                }}
                 onClose={() => setSelectedId(null)}
               />
             </ErrorBoundary>

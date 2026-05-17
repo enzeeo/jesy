@@ -49,6 +49,38 @@ def fail(msg: str) -> None:
     print(f"  {RED}✗{RESET} {msg}")
 
 
+def migrate_incidents_schema(cur, db: str) -> None:
+    """Align CLEAN.INCIDENTS with current schema (INCIDENT_DESCRIPTION; no SOURCE/CONFIDENCE/VICTIM_COUNT)."""
+    cur.execute(f"USE SCHEMA {SCHEMA_CLEAN}")
+    cur.execute(
+        f"""
+        SELECT COLUMN_NAME
+        FROM {db}.INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'INCIDENTS'
+        """,
+        (SCHEMA_CLEAN,),
+    )
+    cols = {row[0].upper() for row in cur.fetchall()}
+
+    if "LOCATION_DESCRIPTION" in cols and "INCIDENT_DESCRIPTION" not in cols:
+        cur.execute(
+            "ALTER TABLE INCIDENTS RENAME COLUMN LOCATION_DESCRIPTION TO INCIDENT_DESCRIPTION"
+        )
+        cols.remove("LOCATION_DESCRIPTION")
+        cols.add("INCIDENT_DESCRIPTION")
+    elif "LOCATION_DESCRIPTION" in cols and "INCIDENT_DESCRIPTION" in cols:
+        cur.execute(
+            "UPDATE INCIDENTS SET INCIDENT_DESCRIPTION = LOCATION_DESCRIPTION "
+            "WHERE INCIDENT_DESCRIPTION IS NULL"
+        )
+        cur.execute("ALTER TABLE INCIDENTS DROP COLUMN LOCATION_DESCRIPTION")
+        cols.discard("LOCATION_DESCRIPTION")
+
+    for col in ("SOURCE", "VICTIM_COUNT", "CONFIDENCE"):
+        if col in cols:
+            cur.execute(f"ALTER TABLE INCIDENTS DROP COLUMN {col}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Snowflake smoke test")
     parser.add_argument("--init", action="store_true", help="Run scripts/snowflake_init.sql before checks")
@@ -91,6 +123,8 @@ def main() -> int:
             for stmt in (s.strip() for s in sql_text.split(";") if s.strip()):
                 cur.execute(stmt)
             ok("ran snowflake_init.sql")
+            migrate_incidents_schema(cur, db)
+            ok("migrated CLEAN.INCIDENTS location schema")
         except Exception as e:  # noqa: BLE001
             fail(f"DDL failed: {e}")
             return 1

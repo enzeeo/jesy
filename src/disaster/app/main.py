@@ -125,6 +125,7 @@ def create_app(
     app.include_router(intake_tools_router)
     app.include_router(tiles_router)
     app.include_router(cortex_router)
+    app.include_router(chat_router)
     app.include_router(sim_router)
     app.include_router(demo_router)
     app.include_router(analysis_router)
