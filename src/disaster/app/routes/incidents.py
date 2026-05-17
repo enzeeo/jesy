@@ -38,6 +38,11 @@ async def create_incident(report: IncidentReport, request: Request) -> IncidentR
     """
     state = _state(request)
 
+    # Stamp the active sim_run_id if the client didn't already provide one.
+    # This is what makes caller-ui submissions show up in the AAR scoped by run.
+    if report.sim_run_id is None and state.active_sim_run_id is not None:
+        report = report.model_copy(update={"sim_run_id": state.active_sim_run_id})
+
     try:
         triage = score(report, current_time=datetime.now(UTC))
         scored = report.with_triage(triage)

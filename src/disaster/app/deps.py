@@ -30,3 +30,11 @@ class AppState:
     # provisional incident it created, so retried tool calls don't duplicate.
     # Single-caller demo scope — in-memory, no eviction.
     voice_conversations: dict[str, UUID] = field(default_factory=dict)
+
+    # The sim_run_id of the run currently in progress. Set by /sim/start and
+    # cleared by /sim/stop. Every incident-write path stamps incident.sim_run_id
+    # from this field when it's not None, so the AAR for that run can scope to
+    # exactly the incidents that arrived during it (caller-ui submissions and
+    # /demo/trigger-call would otherwise have sim_run_id=None and be invisible
+    # to the AAR). Singleton: /sim/start returns 409 if this is already set.
+    active_sim_run_id: str | None = None

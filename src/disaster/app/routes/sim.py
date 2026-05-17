@@ -9,7 +9,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from disaster.simulator import DisasterSimulator
@@ -60,6 +60,11 @@ class StartPayload(BaseModel):
 @router.post("/start")
 async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
     state = _state(request)
+    if state.active_sim_run_id is not None and state.active_sim_run_id != payload.run_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"another sim run is active: {state.active_sim_run_id}",
+        )
     sim = _get_or_create_sim(state)
     if sim.running:
         return {"status": "already_running", **sim.snapshot()}
@@ -69,6 +74,9 @@ async def start_sim(payload: StartPayload, request: Request) -> dict[str, Any]:
         seed=payload.seed,
         demo_window_s=payload.demo_window_s,
     )
+    # Make this the active run so /incidents, /intake/voice, /demo/trigger-call
+    # all stamp incident.sim_run_id with it. The AAR scopes by this id.
+    state.active_sim_run_id = payload.run_id
     await state.events.publish({
         "type": "sim_started",
         "data": {"run_id": payload.run_id, "count": payload.count, "window_s": payload.demo_window_s},
@@ -82,6 +90,7 @@ async def stop_sim(request: Request) -> dict[str, Any]:
     state = _state(request)
     sim = _get_or_create_sim(state)
     await sim.stop()
+    state.active_sim_run_id = None
     return {"status": "stopped", **sim.snapshot()}
 
 

@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS voice_calls (
 );
 
 -- ── responder_dispatches ─────────────────────────────────────────────────────
+-- NOTE: sim_run_id added 2026-05-17 for AAR per-run scoping. If your warehouse
+-- already has the table without this column, run:
+--   ALTER TABLE responder_dispatches ADD COLUMN sim_run_id VARCHAR(64);
+-- Or drop+recreate (rehearsal data is disposable):
+--   DROP TABLE responder_dispatches; -- then re-run this script
 CREATE TABLE IF NOT EXISTS responder_dispatches (
     responder_id          VARCHAR(36)   NOT NULL,
     incident_id           VARCHAR(36)   NOT NULL,
@@ -55,6 +60,7 @@ CREATE TABLE IF NOT EXISTS responder_dispatches (
     distance_km           FLOAT         NOT NULL,
     eta_seconds           FLOAT         NOT NULL,
     solver                VARCHAR(20)   NOT NULL,    -- greedy | vrp
+    sim_run_id            VARCHAR(64),               -- per-run AAR scoping (nullable for pre-2026-05 rows)
     _ingested_at          TIMESTAMP_TZ  DEFAULT CURRENT_TIMESTAMP()
 );
 

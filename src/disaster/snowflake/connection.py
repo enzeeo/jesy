@@ -50,7 +50,7 @@ _SCHEMAS: dict[str, list[str]] = {
     ],
     "responder_dispatches": [
         "responder_id", "incident_id", "dispatched_at",
-        "distance_km", "eta_seconds", "solver",
+        "distance_km", "eta_seconds", "solver", "sim_run_id",
     ],
     "cortex_alerts": [
         "alert_type", "severity", "message", "detected_at",

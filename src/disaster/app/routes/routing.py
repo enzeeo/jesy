@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request
@@ -26,6 +27,9 @@ async def optimize_routes(request: Request, prefer_vrp: bool = False) -> dict[st
     """
     Recompute dispatch. Defaults to greedy (demo path); pass ?prefer_vrp=true
     to try OR-Tools first.
+
+    Side effect: writes one responder_dispatches row per RouteLeg so the
+    post-disaster AAR has a real baseline for its counterfactual A/B.
     """
     state = _state(request)
     incidents = [
@@ -34,6 +38,22 @@ async def optimize_routes(request: Request, prefer_vrp: bool = False) -> dict[st
     ]
     responders = await state.responders.list()
     assignment = optimize(incidents, responders, prefer_vrp=prefer_vrp)
+
+    # Persist the dispatch decisions so the AAR can read "what actually happened"
+    # rather than re-deriving via replay. sim_run_id scopes the AAR per-run.
+    dispatched_at = datetime.now(UTC).isoformat()
+    if state.snowflake is not None:
+        for responder_id, legs in assignment.routes.items():
+            for leg in legs:
+                state.snowflake.write("responder_dispatches", {
+                    "responder_id": str(responder_id),
+                    "incident_id": str(leg.incident_id),
+                    "dispatched_at": dispatched_at,
+                    "distance_km": leg.distance_km,
+                    "eta_seconds": leg.eta_seconds,
+                    "solver": assignment.solver,
+                    "sim_run_id": state.active_sim_run_id,
+                })
 
     payload = {
         "solver": assignment.solver,
