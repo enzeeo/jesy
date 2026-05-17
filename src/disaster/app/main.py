@@ -105,7 +105,7 @@ def create_app(
             yield
         finally:
             if state.snowflake is not None:
-                await state.snowflake.stop(drain_timeout_s=5.0)
+                await state.snowflake.stop(drain_timeout_s=60.0)
             completion = getattr(state, "_llm_completion", None)
             if completion is not None:
                 await close_openai_completion(completion)

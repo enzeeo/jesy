@@ -115,6 +115,17 @@ async def test_per_table_batching_is_independent():
 
 # ── Worker lifecycle ─────────────────────────────────────────────────────────
 
+async def test_flush_pending_drains_queue():
+    flush, collected = _collecting_flush()
+    w = SnowflakeWriter(flush, batch_size=100, flush_interval_s=60.0)
+    await w.start()
+    w.write("CLEAN.INCIDENTS", {"INCIDENT_ID": "a"})
+    w.write("CLEAN.INCIDENTS", {"INCIDENT_ID": "b"})
+    await w.flush_pending(timeout_s=2.0)
+    assert len(collected.get("CLEAN.INCIDENTS", [])) == 2
+    await w.stop()
+
+
 async def test_stop_drains_pending_rows():
     flush, collected = _collecting_flush()
     w = SnowflakeWriter(flush, batch_size=100, flush_interval_s=60.0)

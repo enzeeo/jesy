@@ -54,7 +54,8 @@ async def create_incident(report: IncidentReport, request: Request) -> IncidentR
     persisted = await state.incidents.insert(scored, external_id=external_id)
 
     if state.snowflake is not None:
-        state.snowflake.write("incidents", persisted.model_dump(mode="json"))
+        from disaster.snowflake import ingest
+        ingest.emit_incident(state.snowflake, persisted.model_dump(mode="json"))
 
     await state.events.publish({
         "type": "incident_created",
@@ -105,7 +106,8 @@ async def escalate_incident(
     await state.incidents.update(updated)
 
     if state.snowflake is not None:
-        state.snowflake.write("incidents", updated.model_dump(mode="json"))
+        from disaster.snowflake import ingest
+        ingest.emit_incident(state.snowflake, updated.model_dump(mode="json"))
 
     await state.events.publish({
         "type": "severity_upgraded",
