@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from disaster.events import EventBroker
 from disaster.snowflake import SnowflakeWriter
@@ -24,3 +25,8 @@ class AppState:
     snowflake: SnowflakeWriter | None = None        # injected at startup
     llm_client: LLMClient | None = None             # injected at startup
     elevenlabs_secret: bytes | None = None          # for HMAC verification
+
+    # ElevenLabs Conversational AI: maps the agent's conversation_id to the
+    # provisional incident it created, so retried tool calls don't duplicate.
+    # Single-caller demo scope — in-memory, no eviction.
+    voice_conversations: dict[str, UUID] = field(default_factory=dict)

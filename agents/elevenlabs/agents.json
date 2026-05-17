@@ -1,0 +1,10 @@
+{
+    "agents": [
+        {
+            "config": "agent_configs/emergency-intake.json",
+            "id": "agent_6301krszvy6temz9c53w9d7eaf1z",
+            "version_id": "agtvrsn_3201krt2v2bseszsdcn7z66nsh9p",
+            "branch_id": "agtbrch_6301krszvz3wekwte1a7v9hcbf5k"
+        }
+    ]
+}
