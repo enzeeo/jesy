@@ -176,21 +176,25 @@ async def _compute_aar(
         raise AARNotFound(f"no incidents found for sim_run_id={sim_run_id}")
 
     responders = await state.responders.list()
-
-    # 3-way merge: real arrivals → estimated dispatches → synthesized greedy.
-    # Live runs skip arrivals (churny + queries are extra latency on the polling path).
-    resolved_etas, data_source = await _resolve_etas(
-        sim_run_id, state, incidents, responders, is_live=is_live,
-    )
-
-    # Aggregate route-optimization metadata for the run.
-    route_runs = await _load_route_runs_summary(sim_run_id, state, is_live=is_live)
-
-    road_access = await _load_road_access_context(sim_run_id, state)
-
     started_at = min(i.timestamp for i in incidents)
     ended_at = max(i.timestamp for i in incidents)
-    cortex_alerts = await _load_cortex_alerts(state, started_at, ended_at, is_live=is_live)
+
+    # Fan all Snowflake-touching loaders out in parallel. Each call has its own
+    # 4s timeout; running them in series would budget 6 * 4 = 24s and bust the
+    # SSR fetch deadline (15s). asyncio.gather caps wall time at max(loaders).
+    # 3-way merge: real arrivals → estimated dispatches → synthesized greedy.
+    # Live runs skip arrivals (churny + queries are extra latency on polling).
+    (
+        (resolved_etas, data_source),
+        route_runs,
+        road_access,
+        cortex_alerts,
+    ) = await asyncio.gather(
+        _resolve_etas(sim_run_id, state, incidents, responders, is_live=is_live),
+        _load_route_runs_summary(sim_run_id, state, is_live=is_live),
+        _load_road_access_context(sim_run_id, state),
+        _load_cortex_alerts(state, started_at, ended_at, is_live=is_live),
+    )
 
     # Existing builders take a flat dict[UUID, float] of seconds. Project the
     # resolved map down so we don't need to touch their signatures.
