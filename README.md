@@ -1,4 +1,4 @@
-# Hilo Dispatch
+# Dispatch
 
 Real-time disaster response coordination system for a hackathon demo. The current `main`
 branch is a Python/FastAPI backend with a Next.js responder dashboard.
